@@ -1,0 +1,13 @@
+pkg/
+api.key
+*-handin.tar.gz
+*out*
+*intermediate*
+mrmaster
+mrworker
+mrsequential
+*.so
+
+.idea
+
+mr-tmp
