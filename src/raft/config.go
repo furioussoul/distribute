@@ -311,6 +311,8 @@ func (cfg *config) checkOneLeader() int {
 			}
 		}
 
+		fmt.Printf("leaders[%+v]\n", leaders)
+
 		lastTermWithLeader := -1
 		for term, leaders := range leaders {
 			if len(leaders) > 1 {
