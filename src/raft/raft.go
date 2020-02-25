@@ -139,134 +139,6 @@ type RequestVoteArgs struct {
 }
 
 //
-// example RequestVote RPC reply structure.
-// field names must start with capital letters!
-//
-type RequestVoteReply struct {
-	// Your data here (2A).
-	Term        int
-	VoteGranted bool
-}
-
-type RequestAppendEntries struct {
-	Term     int
-	LeaderId int
-}
-
-type ReplyAppendEntries struct {
-	Term    int
-	Success bool
-}
-
-//
-// example RequestVote RPC handler.
-//
-func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
-
-	// Your code here (2A, 2B).
-
-	if rf.killed() {
-		return
-	}
-
-	// Your code here (2A, 2B).
-	if args.Term > rf.currentTerm || (args.Term == rf.currentTerm && (rf.votedFor == -1 || rf.votedFor == args.CandidateId)) {
-		DPrintf("[%d] grant [%d]'s vote [currentTerm:%d][requestTerm:%d]\n", rf.me, args.CandidateId, rf.currentTerm, args.Term)
-		rf.votedFor = args.CandidateId
-		rf.currentTerm = args.Term
-		reply.VoteGranted = true
-	} else {
-		reply.VoteGranted = false
-		DPrintf("[%d] reject [%d]'s vote [currentTerm:%d][requestTerm:%d]\n", rf.me, args.CandidateId, rf.currentTerm, args.Term)
-	}
-}
-
-func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntries) {
-	if rf.killed() {
-		return
-	}
-	if args.LeaderId == rf.me {
-		reply.Success = true
-		return
-	}
-	if args.Term >= rf.currentTerm {
-		if rf.ticker != nil {
-			rf.ticker.Stop()
-		}
-		rf.role = 1
-		rf.votedFor = -1
-		if args.Term > rf.currentTerm || rf.leaderId != args.LeaderId {
-			DPrintf("[id:%d] update term from [%d] to [%d]; leader from [%d] to [%d]\n",
-				rf.me, rf.currentTerm, args.Term, rf.leaderId, args.LeaderId)
-			rf.leaderId = args.LeaderId
-			rf.currentTerm = args.Term
-		}
-		reply.Term = rf.currentTerm
-		reply.Success = true
-		go rf.timeout(rf.followerHb)
-	} else {
-		reply.Term = rf.currentTerm
-		reply.Success = false
-	}
-}
-
-//
-// example code to send a RequestVote RPC to a server.
-// server is the index of the target server in rf.peers[].
-// expects RPC arguments in args.
-// fills in *reply with RPC reply, so caller should
-// pass &reply.
-// the types of the args and reply passed to Call() must be
-// the same as the types of the arguments declared in the
-// handler function (including whether they are pointers).
-//
-// The labrpc package simulates a lossy network, in which servers
-// may be unreachable, and in which requests and replies may be lost.
-// Call() sends a request and waits for a reply. If a reply arrives
-// within a timeout interval, Call() returns true; otherwise
-// Call() returns false. Thus Call() may not return for a while.
-// A false return can be caused by a dead server, a live server that
-// can't be reached, a lost request, or a lost reply.
-//
-// Call() is guaranteed to return (perhaps after a delay) *except* if the
-// handler function on the server side does not return.  Thus there
-// is no need to implement your own timeouts around Call().
-//
-// look at the comments in ../labrpc/labrpc.go for more details.
-//
-// if you're having trouble getting RPC to work, check that you've
-// capitalized all field names in structs passed over RPC, and
-// that the caller passes the address of the reply struct with &, not
-// the struct itself.
-//
-func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	if rf.killed() {
-		return false
-	}
-	ch := make(chan bool)
-
-	go func() {
-		ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
-		ch <- ok
-	}()
-
-	select {
-	case ok := <-ch:
-		return ok
-	case <-time.After(rf.heartBeatTimeout):
-		return false
-	}
-}
-
-func (rf *Raft) sendAppendEntries(server int, args *RequestAppendEntries, reply *ReplyAppendEntries) bool {
-	if rf.killed() {
-		return false
-	}
-	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
-	return ok
-}
-
-//
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
 // server isn't the leader, returns false. otherwise start the
@@ -340,7 +212,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
-	go rf.timeout(rf.followerHb)
+	go rf.transitionToFollower()
 
 	DPrintf("[node:%d][role:%d][term:%d]start\n", rf.me, rf.role, rf.currentTerm)
 
@@ -372,14 +244,14 @@ func (rf *Raft) heartbeat(cb func()) {
 func (rf *Raft) followerHb() {
 	DPrintf("[role:%d][id:%d][term:%d] transition to candidate \n",
 		rf.role, rf.me, rf.currentTerm)
-	rf.leaderId = -1
-	rf.votedFor = -1
 	rf.role = 2
 	go rf.timeout(rf.candidateHb)
 }
 
 func (rf *Raft) candidateHb() {
 
+	rf.lock.Lock()
+	defer rf.lock.Unlock()
 	rf.currentTerm += 1
 	rf.votedFor = rf.me
 
@@ -395,7 +267,7 @@ func (rf *Raft) candidateHb() {
 		go func(j int) {
 			args := RequestVoteArgs{
 				Term:        rf.currentTerm,
-				CandidateId: rf.votedFor,
+				CandidateId: rf.me,
 			}
 			reply := RequestVoteReply{}
 
@@ -420,7 +292,7 @@ func (rf *Raft) candidateHb() {
 				//election complete voteCount be equals to peers count -1
 				DPrintf("$1 election lose [%d]-transition to follower\n", rf.me)
 				rf.role = 1
-				go rf.timeout(rf.followerHb)
+				go rf.transitionToFollower()
 				return
 			}
 		}(i)
@@ -442,10 +314,17 @@ func (rf *Raft) leaderHb() {
 			if reply.Term > rf.currentTerm {
 				rf.leaderId = j
 				rf.role = 1
-				go rf.timeout(rf.followerHb)
+				go rf.transitionToFollower()
 			}
 		}(i)
 	}
+}
+
+func (rf *Raft) transitionToFollower() {
+	if rf.ticker != nil {
+		rf.ticker.Stop()
+	}
+	rf.timeout(rf.followerHb)
 }
 
 func (rf *Raft) calElectionTimeout() int64 {
