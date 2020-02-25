@@ -18,7 +18,6 @@ package raft
 //
 
 import (
-	"fmt"
 	"math/rand"
 	"sync"
 	"time"
@@ -85,7 +84,7 @@ func (rf *Raft) GetState() (int, bool) {
 	term = rf.currentTerm
 	isleader = rf.me == rf.leaderId
 
-	fmt.Printf("GetState [id%d][role:%d][leader:%d][term:%d]\n", rf.me, rf.role, rf.leaderId, rf.currentTerm)
+	//DPrintf("GetState [id%d][role:%d][leader:%d][term:%d]\n", rf.me, rf.role, rf.leaderId, rf.currentTerm)
 	return term, isleader
 }
 
@@ -165,35 +164,24 @@ type ReplyAppendEntries struct {
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	// Your code here (2A, 2B).
-	rf.lock.Lock()
-	defer rf.lock.Unlock()
+
 	if rf.killed() {
 		return
 	}
-	if args.CandidateId == rf.me {
-		reply.VoteGranted = true
-		return
-	}
-	if rf.role == 3 {
-		reply.VoteGranted = false
-		return
-	}
+
 	// Your code here (2A, 2B).
 	if args.Term > rf.currentTerm || (args.Term == rf.currentTerm && (rf.votedFor == -1 || rf.votedFor == args.CandidateId)) {
+		DPrintf("[%d] grant [%d]'s vote [currentTerm:%d][requestTerm:%d]\n", rf.me, args.CandidateId, rf.currentTerm, args.Term)
 		rf.votedFor = args.CandidateId
 		rf.currentTerm = args.Term
 		reply.VoteGranted = true
-		fmt.Printf("[%d] grant [%d]'s vote [currentTerm:%d][requestTerm:%d]\n", rf.me, args.CandidateId, rf.currentTerm, args.Term)
 	} else {
 		reply.VoteGranted = false
-		fmt.Printf("[%d] reject [%d]'s vote [currentTerm:%d][requestTerm:%d]\n", rf.me, args.CandidateId, rf.currentTerm, args.Term)
+		DPrintf("[%d] reject [%d]'s vote [currentTerm:%d][requestTerm:%d]\n", rf.me, args.CandidateId, rf.currentTerm, args.Term)
 	}
-	return
 }
 
 func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntries) {
-	rf.lock.Lock()
-	defer rf.lock.Unlock()
 	if rf.killed() {
 		return
 	}
@@ -208,7 +196,7 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 		rf.role = 1
 		rf.votedFor = -1
 		if args.Term > rf.currentTerm || rf.leaderId != args.LeaderId {
-			fmt.Printf("[id:%d] update term from [%d] to [%d]; leader from [%d] to [%d]\n",
+			DPrintf("[id:%d] update term from [%d] to [%d]; leader from [%d] to [%d]\n",
 				rf.me, rf.currentTerm, args.Term, rf.leaderId, args.LeaderId)
 			rf.leaderId = args.LeaderId
 			rf.currentTerm = args.Term
@@ -315,7 +303,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 
 	atomic.StoreInt32(&rf.dead, 1)
-	fmt.Printf("[%d] crash\n", rf.me)
+	DPrintf("[%d] crash\n", rf.me)
 	// Your code here, if desired.
 }
 
@@ -354,7 +342,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	go rf.timeout(rf.followerHb)
 
-	fmt.Printf("[node:%d][role:%d][term:%d]start\n", rf.me, rf.role, rf.currentTerm)
+	DPrintf("[node:%d][role:%d][term:%d]start\n", rf.me, rf.role, rf.currentTerm)
 
 	return rf
 }
@@ -382,101 +370,68 @@ func (rf *Raft) heartbeat(cb func()) {
 }
 
 func (rf *Raft) followerHb() {
-	rf.lock.Lock()
-	fmt.Printf("[role:%d][id:%d][term:%d] transition to candidate \n",
+	DPrintf("[role:%d][id:%d][term:%d] transition to candidate \n",
 		rf.role, rf.me, rf.currentTerm)
 	rf.leaderId = -1
 	rf.votedFor = -1
 	rf.role = 2
-	rf.lock.Unlock()
 	go rf.timeout(rf.candidateHb)
 }
 
 func (rf *Raft) candidateHb() {
 
-	rf.lock.Lock()
-
-	if rf.votedFor != -1 {
-		fmt.Printf("$2 [id:%d][role:%d][term:%d][votefor:%d] transition to follower\n",
-			rf.me, rf.role, rf.currentTerm, rf.votedFor)
-		rf.role = 1
-		rf.lock.Unlock()
-		go rf.timeout(rf.followerHb)
-		return
-	}
 	rf.currentTerm += 1
 	rf.votedFor = rf.me
 
-	fmt.Printf("election start [id:%d][role:%d][term:%d][votefor:%d]\n", rf.me, rf.role, rf.currentTerm, rf.votedFor)
+	DPrintf("election start [id:%d][role:%d][term:%d][votefor:%d]\n", rf.me, rf.role, rf.currentTerm, rf.votedFor)
 	peers := rf.peers
-	if len(peers) == 0 {
-		rf.role = 3
-		rf.lock.Unlock()
-		go rf.heartbeat(rf.leaderHb)
-		return
-	}
-
 	quorum := 1
 	voteCount := 0
-
-	rf.lock.Unlock()
 
 	for i := range peers {
 		if i == rf.me {
 			continue
 		}
 		go func(j int) {
-			rf.lock.Lock()
 			args := RequestVoteArgs{
 				Term:        rf.currentTerm,
-				CandidateId: rf.me,
+				CandidateId: rf.votedFor,
 			}
-			rf.lock.Unlock()
 			reply := RequestVoteReply{}
 
 			ok := rf.sendRequestVote(j, &args, &reply)
-			fmt.Printf("[%d] send vote to [%d] reply:[%+v]\n", rf.me, j, reply)
-			rf.lock.Lock()
+			DPrintf("[%d] send vote to [%d] reply:[%+v]\n", rf.me, j, reply)
 			voteCount += 1
 
-			if ok {
-				if reply.VoteGranted {
-					quorum += 1
-				}
+			if ok && reply.VoteGranted {
+				quorum += 1
 			}
 
 			if quorum >= (len(rf.peers)/2 + 1) {
 				if rf.role == 3 {
-					rf.lock.Unlock()
 					return
 				}
-				fmt.Printf("[id:%d][term:%d] win election transition to leader \n", rf.me, rf.currentTerm)
+				DPrintf("[id:%d][term:%d] win election transition to leader \n", rf.me, rf.currentTerm)
 				rf.leaderId = rf.me
 				rf.role = 3
-				rf.lock.Unlock()
 				go rf.heartbeat(rf.leaderHb)
 
 			} else if voteCount == len(peers)-1 {
 				//election complete voteCount be equals to peers count -1
-				fmt.Printf("$1 election lose [%d]-transition to follower\n", rf.me)
+				DPrintf("$1 election lose [%d]-transition to follower\n", rf.me)
 				rf.role = 1
-				rf.lock.Unlock()
 				go rf.timeout(rf.followerHb)
 				return
-			} else {
-				rf.lock.Unlock()
 			}
 		}(i)
 	}
 }
 
 func (rf *Raft) leaderHb() {
-	rf.lock.Lock()
 	request := RequestAppendEntries{
 		Term:     rf.currentTerm,
 		LeaderId: rf.me,
 	}
-	rf.lock.Unlock()
 	reply := ReplyAppendEntries{}
 	for i := range rf.peers {
 		if i == rf.me {
