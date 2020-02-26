@@ -66,76 +66,25 @@ type Raft struct {
 	leaderId int
 	role     int //1 follower; 2 candidate; 3 leader;
 
-	heartbeatCh chan struct{}
-	hb          func()
+	hb func()
 
-	electionTimeout  time.Duration
-	heartBeatTimeout time.Duration
-	timer            *time.Timer
-	ticker           *time.Ticker
+	electionTimeout   time.Duration
+	heartBeatInterval time.Duration
+	timer             *time.Timer
+	ticker            *time.Ticker
+
+	log         []LogEntry
+	commitIndex int
+	lastApplied int
+	nextIndex   []int
+	matchIndex  []int
+	updateTime  time.Time
 }
 
-// return currentTerm and whether this server
-// believes it is the leader.
-func (rf *Raft) GetState() (int, bool) {
-	var term int
-	var isleader bool
-	// Your code here (2A).
-	term = rf.currentTerm
-	isleader = rf.me == rf.leaderId
-
-	//DPrintf("GetState [id%d][role:%d][leader:%d][term:%d]\n", rf.me, rf.role, rf.leaderId, rf.currentTerm)
-	return term, isleader
-}
-
-//
-// save Raft's persistent state to stable storage,
-// where it can later be retrieved after a crash and restart.
-// see paper's Figure 2 for a description of what should be persistent.
-//
-func (rf *Raft) persist() {
-	// Your code here (2C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
-}
-
-//
-// restore previously persisted state.
-//
-func (rf *Raft) readPersist(data []byte) {
-	if data == nil || len(data) < 1 { // bootstrap without any state?
-		return
-	}
-	// Your code here (2C).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
-}
-
-//
-// example RequestVote RPC arguments structure.
-// field names must start with capital letters!
-//
-type RequestVoteArgs struct {
-	// Your data here (2A, 2B).
-	Term         int
-	CandidateId  int
-	LastLogIndex int
-	LastLogTerm  int
+type LogEntry struct {
+	Term    int
+	Index   int
+	command interface{}
 }
 
 //
@@ -202,13 +151,16 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.persister = persister
 	rf.me = me
 	rf.role = 1
-	rf.heartbeatCh = make(chan struct{})
-	rf.heartBeatTimeout = 20 * time.Millisecond
+	rf.heartBeatInterval = 20 * time.Millisecond
 	rf.electionTimeout = 150 * time.Millisecond
 	rf.votedFor = -1
 	rf.leaderId = -1
-	// Your initialization code here (2A, 2B, 2C).
-
+	rf.updateTime = time.Now()
+	rf.log = []LogEntry{{0, 0, nil}}
+	rf.commitIndex = 0
+	rf.lastApplied = 0
+	rf.nextIndex = make([]int, len(peers))
+	rf.matchIndex = make([]int, len(peers))
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
@@ -232,7 +184,7 @@ func (rf *Raft) timeout(cb func()) {
 }
 
 func (rf *Raft) heartbeat(cb func()) {
-	rf.ticker = time.NewTicker(rf.heartBeatTimeout)
+	rf.ticker = time.NewTicker(rf.heartBeatInterval)
 	for {
 		select {
 		case <-rf.ticker.C:
@@ -242,9 +194,7 @@ func (rf *Raft) heartbeat(cb func()) {
 }
 
 func (rf *Raft) followerHb() {
-	DPrintf("[role:%d][id:%d][term:%d] transition to candidate \n",
-		rf.role, rf.me, rf.currentTerm)
-	rf.role = 2
+	rf.role = 1
 	go rf.timeout(rf.candidateHb)
 }
 
@@ -252,78 +202,24 @@ func (rf *Raft) candidateHb() {
 
 	rf.lock.Lock()
 	defer rf.lock.Unlock()
-	rf.currentTerm += 1
+	rf.role = 2
 	rf.votedFor = rf.me
-
-	DPrintf("election start [id:%d][role:%d][term:%d][votefor:%d]\n", rf.me, rf.role, rf.currentTerm, rf.votedFor)
-	peers := rf.peers
-	quorum := 1
-	voteCount := 0
-
-	for i := range peers {
-		if i == rf.me {
-			continue
-		}
-		go func(j int) {
-			args := RequestVoteArgs{
-				Term:        rf.currentTerm,
-				CandidateId: rf.me,
-			}
-			reply := RequestVoteReply{}
-
-			ok := rf.sendRequestVote(j, &args, &reply)
-			DPrintf("[%d] send vote to [%d] reply:[%+v]\n", rf.me, j, reply)
-			voteCount += 1
-
-			if ok && reply.VoteGranted {
-				quorum += 1
-			}
-
-			if quorum >= (len(rf.peers)/2 + 1) {
-				if rf.role == 3 {
-					return
-				}
-				DPrintf("[id:%d][term:%d] win election transition to leader \n", rf.me, rf.currentTerm)
-				rf.leaderId = rf.me
-				rf.role = 3
-				go rf.heartbeat(rf.leaderHb)
-
-			} else if voteCount == len(peers)-1 {
-				//election complete voteCount be equals to peers count -1
-				DPrintf("$1 election lose [%d]-transition to follower\n", rf.me)
-				rf.role = 1
-				go rf.transitionToFollower()
-				return
-			}
-		}(i)
-	}
+	rf.updateTime = time.Now()
+	DPrintf("[%v]-[%d] update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, rf.currentTerm+1)
+	rf.currentTerm += 1
+	rf.vote()
 }
 
 func (rf *Raft) leaderHb() {
-	request := RequestAppendEntries{
-		Term:     rf.currentTerm,
-		LeaderId: rf.me,
-	}
-	reply := ReplyAppendEntries{}
-	for i := range rf.peers {
-		if i == rf.me {
-			continue
-		}
-		go func(j int) {
-			rf.sendAppendEntries(j, &request, &reply)
-			if reply.Term > rf.currentTerm {
-				rf.leaderId = j
-				rf.role = 1
-				go rf.transitionToFollower()
-			}
-		}(i)
-	}
+	rf.role = 3
+	rf.append()
 }
 
 func (rf *Raft) transitionToFollower() {
 	if rf.ticker != nil {
 		rf.ticker.Stop()
 	}
+	rf.role = 1
 	rf.timeout(rf.followerHb)
 }
 

@@ -1,6 +1,9 @@
 package raft
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 type RequestVoteReply struct {
 	// Your data here (2A).
@@ -16,6 +19,18 @@ type RequestAppendEntries struct {
 type ReplyAppendEntries struct {
 	Term    int
 	Success bool
+}
+
+//
+// example RequestVote RPC arguments structure.
+// field names must start with capital letters!
+//
+type RequestVoteArgs struct {
+	// Your data here (2A, 2B).
+	Term         int
+	CandidateId  int
+	LastLogIndex int
+	LastLogTerm  int
 }
 
 //
@@ -48,9 +63,7 @@ type ReplyAppendEntries struct {
 // the struct itself.
 //
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	if rf.killed() {
-		return false
-	}
+
 	ch := make(chan bool)
 
 	go func() {
@@ -61,15 +74,146 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	select {
 	case ok := <-ch:
 		return ok
-	case <-time.After(rf.heartBeatTimeout):
+	case <-time.After(200 * time.Millisecond):
+		fmt.Println("timeout")
 		return false
 	}
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *RequestAppendEntries, reply *ReplyAppendEntries) bool {
-	if rf.killed() {
-		return false
-	}
+
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	return ok
+}
+
+func (rf *Raft) vote() {
+	DPrintf("[%d] election start[role:%d][term:%d][votefor:%d]\n", rf.me, rf.role, rf.currentTerm, rf.votedFor)
+	peers := rf.peers
+	quorum := 1
+	voteCount := 0
+
+	for i := range peers {
+		if i == rf.me {
+			continue
+		}
+		go func(j int) {
+			args := RequestVoteArgs{
+				Term:        rf.currentTerm,
+				CandidateId: rf.me,
+			}
+			reply := RequestVoteReply{}
+
+			ok := rf.sendRequestVote(j, &args, &reply)
+			DPrintf("[%d] sent vote to [%d] reply-[Term:%d][VoteGranted:%v]\n", rf.me, j, reply.Term, reply.VoteGranted)
+			voteCount += 1
+
+			if ok && reply.VoteGranted {
+				quorum += 1
+			} else if reply.Term > rf.currentTerm {
+				rf.lock.Lock()
+				rf.role = 1
+				rf.updateTime = time.Now()
+				DPrintf("[%v]-[%d] update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
+				rf.currentTerm = reply.Term
+				rf.lock.Unlock()
+			}
+
+			if quorum >= (len(rf.peers)/2 + 1) {
+				if rf.role == 3 {
+					return
+				}
+				DPrintf("[%d] election #win transition to leader [term:%d]\n", rf.me, rf.currentTerm)
+				rf.leaderId = rf.me
+				rf.role = 3
+				rf.leaderHb()
+				go rf.heartbeat(rf.leaderHb)
+
+			} else if voteCount == len(peers)-1 {
+				//election complete voteCount be equals to peers count -1
+				DPrintf("[%d] election #lose transition to follower [term:%d]\n", rf.me, rf.currentTerm)
+				go rf.transitionToFollower()
+			}
+		}(i)
+	}
+}
+
+func (rf *Raft) append() {
+	request := RequestAppendEntries{
+		Term:     rf.currentTerm,
+		LeaderId: rf.me,
+	}
+	reply := ReplyAppendEntries{}
+	for i := range rf.peers {
+		if i == rf.me {
+			continue
+		}
+		go func(j int) {
+			rf.sendAppendEntries(j, &request, &reply)
+			if reply.Term > rf.currentTerm {
+				rf.lock.Lock()
+				rf.role = 1
+				rf.updateTime = time.Now()
+				DPrintf("[%v]-[%d] update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
+				rf.currentTerm = reply.Term
+
+				rf.lock.Unlock()
+				go rf.transitionToFollower()
+			}
+		}(i)
+	}
+}
+
+func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
+	DPrintf("[%d] voting for [%d] [currentTerm:%d][requestTerm:%d]\n", rf.me, args.CandidateId, rf.currentTerm, args.Term)
+
+	//two nodes vote at the same time may cause this raft node vote for two member ,so we have to lock
+	rf.lock.Lock()
+	defer rf.lock.Unlock()
+
+	if args.Term > rf.currentTerm {
+		DPrintf("[%d] grant [%d]  [currentTerm:%d][requestTerm:%d]\n", rf.me, args.CandidateId, rf.currentTerm, args.Term)
+		rf.updateTime = time.Now()
+		DPrintf("[%v]-[%d] update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, args.Term)
+		rf.currentTerm = args.Term
+		rf.votedFor = args.CandidateId
+		reply.Term = rf.currentTerm
+		reply.VoteGranted = true
+
+	} else if args.Term == rf.currentTerm && (rf.votedFor == -1 || rf.votedFor == args.CandidateId) {
+		DPrintf("[%d] grant [%d] [currentTerm:%d][requestTerm:%d]\n", rf.me, args.CandidateId, rf.currentTerm, args.Term)
+		rf.votedFor = args.CandidateId
+		reply.Term = rf.currentTerm
+		reply.VoteGranted = true
+
+	} else {
+		reply.Term = rf.currentTerm
+		reply.VoteGranted = false
+		DPrintf("[%d] reject [%d] [currentTerm:%d][requestTerm:%d]\n", rf.me, args.CandidateId, rf.currentTerm, args.Term)
+	}
+}
+
+func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntries) {
+
+	rf.lock.Lock()
+	defer rf.lock.Unlock()
+
+	if args.Term < rf.currentTerm {
+		reply.Success = false
+		reply.Term = rf.currentTerm
+		return
+	}
+
+	if args.Term > rf.currentTerm {
+		rf.updateTime = time.Now()
+		DPrintf("[%v]-[%d] update term from [%d] to [%d]; leader from [%d] to [%d]\n",
+			rf.updateTime, rf.me, rf.currentTerm, args.Term, rf.leaderId, args.LeaderId)
+		rf.currentTerm = args.Term
+	}
+	if rf.leaderId != args.LeaderId {
+		rf.leaderId = args.LeaderId
+	}
+	go rf.transitionToFollower()
+	reply.Term = rf.currentTerm
+	reply.Success = true
+
 }
