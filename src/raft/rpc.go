@@ -1,25 +1,8 @@
 package raft
 
 import (
-	"fmt"
 	"time"
 )
-
-type RequestVoteReply struct {
-	// Your data here (2A).
-	Term        int
-	VoteGranted bool
-}
-
-type RequestAppendEntries struct {
-	Term     int
-	LeaderId int
-}
-
-type ReplyAppendEntries struct {
-	Term    int
-	Success bool
-}
 
 //
 // example RequestVote RPC arguments structure.
@@ -31,6 +14,26 @@ type RequestVoteArgs struct {
 	CandidateId  int
 	LastLogIndex int
 	LastLogTerm  int
+}
+
+type RequestVoteReply struct {
+	// Your data here (2A).
+	Term        int
+	VoteGranted bool
+}
+
+type RequestAppendEntries struct {
+	Term         int
+	LeaderId     int
+	PrevLogIndex int
+	PrevLogTerm  int
+	Entries      []LogEntry
+	LeaderCommit int
+}
+
+type ReplyAppendEntries struct {
+	Term    int
+	Success bool
 }
 
 //
@@ -75,7 +78,6 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	case ok := <-ch:
 		return ok
 	case <-time.After(200 * time.Millisecond):
-		fmt.Println("timeout")
 		return false
 	}
 }
@@ -104,7 +106,7 @@ func (rf *Raft) vote() {
 			reply := RequestVoteReply{}
 
 			ok := rf.sendRequestVote(j, &args, &reply)
-			DPrintf("[%d] sent vote to [%d] reply-[Term:%d][VoteGranted:%v]\n", rf.me, j, reply.Term, reply.VoteGranted)
+			//DPrintf("[%d] sent vote to [%d] reply-[Term:%d][VoteGranted:%v]\n", rf.me, j, reply.Term, reply.VoteGranted)
 			voteCount += 1
 
 			if ok && reply.VoteGranted {
@@ -119,12 +121,15 @@ func (rf *Raft) vote() {
 			}
 
 			if quorum >= (len(rf.peers)/2 + 1) {
+				rf.lock.Lock()
 				if rf.role == 3 {
+					rf.lock.Unlock()
 					return
 				}
 				DPrintf("[%d] election #win transition to leader [term:%d]\n", rf.me, rf.currentTerm)
 				rf.leaderId = rf.me
 				rf.role = 3
+				rf.lock.Unlock()
 				rf.leaderHb()
 				go rf.heartbeat(rf.leaderHb)
 
@@ -137,18 +142,55 @@ func (rf *Raft) vote() {
 	}
 }
 
-func (rf *Raft) append() {
+func (rf *Raft) appendLog(command interface{}) (prev LogEntry, entry LogEntry) {
+	prev = rf.log[len(rf.log)-1]
+	entry = LogEntry{
+		Term:    rf.currentTerm,
+		Index:   len(rf.log),
+		Command: command,
+	}
+	rf.log = append(rf.log, entry)
+
+	DPrintf("[%d]-[log:%+v]\n", rf.me, rf.log)
+	return prev, entry
+}
+
+func (rf *Raft) appendEmpty() {
+	rf.lock.Lock()
 	request := RequestAppendEntries{
 		Term:     rf.currentTerm,
 		LeaderId: rf.me,
 	}
+	rf.lock.Unlock()
 	reply := ReplyAppendEntries{}
+	rf.append(request, reply)
+}
+
+func (rf *Raft) append(request RequestAppendEntries, reply ReplyAppendEntries) {
+
+	agree := 0
+
 	for i := range rf.peers {
 		if i == rf.me {
 			continue
 		}
 		go func(j int) {
-			rf.sendAppendEntries(j, &request, &reply)
+			ok := rf.sendAppendEntries(j, &request, &reply)
+			if ok && reply.Success {
+				agree += 1
+			}
+
+			if len(request.Entries) > 0 && agree == len(rf.peers)-1 {
+				entry := request.Entries[0]
+				msg := ApplyMsg{
+					CommandValid: true,
+					CommandIndex: entry.Index,
+					Command:      entry.Command,
+				}
+				DPrintf("apply\n")
+				rf.applyCh <- msg
+			}
+
 			if reply.Term > rf.currentTerm {
 				rf.lock.Lock()
 				rf.role = 1
@@ -164,7 +206,7 @@ func (rf *Raft) append() {
 }
 
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
-	DPrintf("[%d] voting for [%d] [currentTerm:%d][requestTerm:%d]\n", rf.me, args.CandidateId, rf.currentTerm, args.Term)
+	//DPrintf("[%d] voting for [%d] [currentTerm:%d][requestTerm:%d]\n", rf.me, args.CandidateId, rf.currentTerm, args.Term)
 
 	//two nodes vote at the same time may cause this raft node vote for two member ,so we have to lock
 	rf.lock.Lock()
@@ -200,20 +242,36 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 	if args.Term < rf.currentTerm {
 		reply.Success = false
 		reply.Term = rf.currentTerm
-		return
-	}
 
-	if args.Term > rf.currentTerm {
+	} else if args.Term >= rf.currentTerm &&
+		(len(args.Entries) == 0 || len(args.Entries) > 0 && rf.logMatch(args.Entries, args.PrevLogTerm, args.PrevLogIndex)) {
+		if args.Term > rf.currentTerm {
+			rf.currentTerm = args.Term
+		}
+		if rf.leaderId != args.LeaderId {
+			rf.leaderId = args.LeaderId
+		}
 		rf.updateTime = time.Now()
 		DPrintf("[%v]-[%d] update term from [%d] to [%d]; leader from [%d] to [%d]\n",
 			rf.updateTime, rf.me, rf.currentTerm, args.Term, rf.leaderId, args.LeaderId)
-		rf.currentTerm = args.Term
+		if len(args.Entries) > 0 {
+			DPrintf("[%d] accept [%d]'s append-[%+v]\n", rf.me, args.LeaderId, args)
+			entry := args.Entries[0]
+			rf.appendLog(entry.Command)
+			msg := ApplyMsg{
+				CommandValid: true,
+				CommandIndex: entry.Index,
+				Command:      entry.Command,
+			}
+			rf.applyCh <- msg
+		}
+		go rf.transitionToFollower()
+		reply.Term = rf.currentTerm
+		reply.Success = true
+
+	} else {
+		reply.Success = false
+		reply.Term = rf.currentTerm
 	}
-	if rf.leaderId != args.LeaderId {
-		rf.leaderId = args.LeaderId
-	}
-	go rf.transitionToFollower()
-	reply.Term = rf.currentTerm
-	reply.Success = true
 
 }

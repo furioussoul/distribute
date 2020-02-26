@@ -44,7 +44,7 @@ type config struct {
 	connected []bool   // whether each server is on the net
 	saved     []*Persister
 	endnames  [][]string            // the port file names each sends to
-	logs      []map[int]interface{} // copy of each server's committed entries
+	logs      []map[int]interface{} // copy of each server's committed Entries
 	start     time.Time             // time at which make_config() was called
 	// begin()/end() statistics
 	t0        time.Time // time at which test_test.go called cfg.begin()
@@ -166,6 +166,7 @@ func (cfg *config) start1(i int) {
 	applyCh := make(chan ApplyMsg)
 	go func() {
 		for m := range applyCh {
+			DPrintf("applyCh-[%+v]", m)
 			err_msg := ""
 			if m.CommandValid == false {
 				// ignore other types of ApplyMsg
@@ -370,6 +371,7 @@ func (cfg *config) nCommitted(index int) (int, interface{}) {
 
 		cfg.mu.Lock()
 		cmd1, ok := cfg.logs[i][index]
+		//DPrintf("[%d][%d][%+v]\n", i, index, cmd1)
 		cfg.mu.Unlock()
 
 		if ok {
@@ -423,7 +425,7 @@ func (cfg *config) wait(index int, n int, startTerm int) interface{} {
 // same value, since nCommitted() checks this,
 // as do the threads that read from applyCh.
 // returns index.
-// if retry==true, may submit the command multiple
+// if retry==true, may submit the Command multiple
 // times, in case a leader fails just after Start().
 // if retry==false, calls Start() only once, in order
 // to simplify the early Lab 2B tests.
@@ -452,14 +454,15 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 
 		if index != -1 {
 			// somebody claimed to be the leader and to have
-			// submitted our command; wait a while for agreement.
+			// submitted our Command; wait a while for agreement.
 			t1 := time.Now()
 			for time.Since(t1).Seconds() < 2 {
 				nd, cmd1 := cfg.nCommitted(index)
+				//DPrintf("nd-[%d] cmd1-[%+v]\n", nd, cmd1)
 				if nd > 0 && nd >= expectedServers {
 					// committed
 					if cmd1 == cmd {
-						// and it was the command we submitted.
+						// and it was the Command we submitted.
 						return index
 					}
 				}

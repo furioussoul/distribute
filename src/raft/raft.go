@@ -7,7 +7,7 @@ package raft
 //
 // rf = Make(...)
 //   create a new Raft server.
-// rf.Start(command interface{}) (index, Term, isleader)
+// rf.Start(Command interface{}) (index, Term, isleader)
 //   start agreement on a new log entry
 // rf.GetState() (Term, isLeader)
 //   ask a Raft for its current Term, and whether it thinks it is leader
@@ -29,7 +29,7 @@ import "../labrpc"
 // import "../labgob"
 
 //
-// as each Raft peer becomes aware that successive log entries are
+// as each Raft peer becomes aware that successive log Entries are
 // committed, the peer should send an ApplyMsg to the service (or
 // tester) on the same server, via the applyCh passed to Make(). set
 // CommandValid to true to indicate that the ApplyMsg contains a newly
@@ -79,34 +79,55 @@ type Raft struct {
 	nextIndex   []int
 	matchIndex  []int
 	updateTime  time.Time
+	applyCh     chan ApplyMsg
 }
 
 type LogEntry struct {
 	Term    int
 	Index   int
-	command interface{}
+	Command interface{}
 }
 
 //
 // the service using Raft (e.g. a k/v server) wants to start
-// agreement on the next command to be appended to Raft's log. if this
+// agreement on the next Command to be appended to Raft's log. if this
 // server isn't the leader, returns false. otherwise start the
 // agreement and return immediately. there is no guarantee that this
-// command will ever be committed to the Raft log, since the leader
+// Command will ever be committed to the Raft log, since the leader
 // may fail or lose an election. even if the Raft instance has been killed,
 // this function should return gracefully.
 //
-// the first return value is the index that the command will appear at
+// the first return value is the index that the Command will appear at
 // if it's ever committed. the second return value is the current
 // Term. the third return value is true if this server believes it is
 // the leader.
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
+	rf.lock.Lock()
 	index := -1
 	term := -1
 	isLeader := rf.me == rf.leaderId
 
 	// Your code here (2B).
+
+	if isLeader {
+		prev, entry := rf.appendLog(command)
+
+		request := RequestAppendEntries{
+			Term:         rf.currentTerm,
+			LeaderId:     rf.me,
+			Entries:      []LogEntry{entry},
+			PrevLogIndex: prev.Index,
+			PrevLogTerm:  prev.Term,
+			LeaderCommit: rf.commitIndex,
+		}
+		reply := ReplyAppendEntries{}
+		index = entry.Index
+		term = entry.Term
+		rf.append(request, reply)
+	}
+
+	rf.lock.Unlock()
 
 	return index, term, isLeader
 }
@@ -150,6 +171,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
+	rf.applyCh = applyCh
 	rf.role = 1
 	rf.heartBeatInterval = 20 * time.Millisecond
 	rf.electionTimeout = 150 * time.Millisecond
@@ -212,7 +234,7 @@ func (rf *Raft) candidateHb() {
 
 func (rf *Raft) leaderHb() {
 	rf.role = 3
-	rf.append()
+	rf.appendEmpty()
 }
 
 func (rf *Raft) transitionToFollower() {
@@ -226,4 +248,8 @@ func (rf *Raft) transitionToFollower() {
 func (rf *Raft) calElectionTimeout() int64 {
 	n := rand.Int63n(rf.electionTimeout.Milliseconds()) + rf.electionTimeout.Milliseconds()
 	return n
+}
+
+func (rf *Raft) logMatch([]LogEntry, int, int) bool {
+	return true
 }

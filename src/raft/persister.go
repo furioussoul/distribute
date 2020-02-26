@@ -78,7 +78,6 @@ func (rf *Raft) GetState() (int, bool) {
 	term = rf.currentTerm
 	isleader = rf.me == rf.leaderId
 
-	DPrintf("[%v]-[%d] state [role:%d][leader:%d][term:%d]\n", rf.updateTime, rf.me, rf.role, rf.leaderId, rf.currentTerm)
 	return term, isleader
 }
 
