@@ -163,13 +163,18 @@ func TestFailAgree2B(t *testing.T) {
 	leader := cfg.checkOneLeader()
 	cfg.disconnect((leader + 1) % servers)
 
+	fmt.Println("pass -------1--------")
+
 	// the leader and remaining follower should be
 	// able to agree despite the disconnected follower.
 	cfg.one(102, servers-1, false)
 	cfg.one(103, servers-1, false)
+
 	time.Sleep(RaftElectionTimeout)
 	cfg.one(104, servers-1, false)
 	cfg.one(105, servers-1, false)
+
+	fmt.Println("pass -------2--------")
 
 	// re-connect
 	cfg.connect((leader + 1) % servers)
@@ -178,6 +183,8 @@ func TestFailAgree2B(t *testing.T) {
 	// previous agreements, and be able to agree
 	// on new commands.
 	cfg.one(106, servers, true)
+
+	fmt.Println("pass -------3--------")
 	time.Sleep(RaftElectionTimeout)
 	cfg.one(107, servers, true)
 

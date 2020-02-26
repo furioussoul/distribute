@@ -166,7 +166,7 @@ func (cfg *config) start1(i int) {
 	applyCh := make(chan ApplyMsg)
 	go func() {
 		for m := range applyCh {
-			DPrintf("applyCh-[%+v]", m)
+			//DPrintf("applyCh-[%+v]", m)
 			err_msg := ""
 			if m.CommandValid == false {
 				// ignore other types of ApplyMsg

@@ -151,7 +151,6 @@ func (rf *Raft) appendLog(command interface{}) (prev LogEntry, entry LogEntry) {
 	}
 	rf.log = append(rf.log, entry)
 
-	DPrintf("[%d]-[log:%+v]\n", rf.me, rf.log)
 	return prev, entry
 }
 
@@ -168,7 +167,7 @@ func (rf *Raft) appendEmpty() {
 
 func (rf *Raft) append(request RequestAppendEntries, reply ReplyAppendEntries) {
 
-	agree := 0
+	agree := 1
 
 	for i := range rf.peers {
 		if i == rf.me {
@@ -180,14 +179,13 @@ func (rf *Raft) append(request RequestAppendEntries, reply ReplyAppendEntries) {
 				agree += 1
 			}
 
-			if len(request.Entries) > 0 && agree == len(rf.peers)-1 {
+			if len(request.Entries) > 0 && agree == len(rf.peers)/2+1 {
 				entry := request.Entries[0]
 				msg := ApplyMsg{
 					CommandValid: true,
 					CommandIndex: entry.Index,
 					Command:      entry.Command,
 				}
-				DPrintf("apply\n")
 				rf.applyCh <- msg
 			}
 
