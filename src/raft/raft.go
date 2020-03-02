@@ -119,8 +119,14 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		} else {
 			return -1, -1, false
 		}
-		index, term = rf.appendLogToLocal(command)
-		rf.appendToMembers()
+
+		entry := LogEntry{
+			Term:    rf.currentTerm,
+			Index:   len(rf.log),
+			Command: command,
+		}
+
+		index, term = rf.appendLogToLocal(entry)
 	}
 
 	return index, term, isLeader
@@ -210,24 +216,26 @@ func (rf *Raft) heartbeat(cb func()) {
 }
 
 func (rf *Raft) followerHb() {
-	rf.role = 1
-	go rf.timeout(rf.candidateHb)
+	rf.transitionToCandidate()
 }
 
 func (rf *Raft) candidateHb() {
-
-	rf.lock.Lock()
-	defer rf.lock.Unlock()
-	rf.role = 2
-	rf.votedFor = rf.me
-	rf.updateTime = time.Now()
-	DPrintf("[%v]-[%d] update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, rf.currentTerm+1)
-	rf.currentTerm += 1
 	rf.vote()
 }
 
 func (rf *Raft) leaderHb() {
-	rf.appendEmpty()
+
+	for i := range rf.peers {
+		if i == rf.me {
+			continue
+		}
+		if rf.matchIndex[i] == len(rf.log)-1 {
+			rf.appendEmpty(i)
+		} else {
+			rf.appendToMembers(i)
+		}
+	}
+
 	rf.resetCommitIndex()
 }
 
@@ -243,8 +251,6 @@ func (rf *Raft) resetCommitIndex() {
 	}
 
 	sort.Ints(ids)
-
-	DPrintf("ids-[%+v]", ids)
 
 	agreeIndex := 0
 	agree := 0
@@ -277,6 +283,9 @@ func (rf *Raft) resetCommitIndex() {
 }
 
 func (rf *Raft) transitionToLeader() {
+	if rf.ticker != nil {
+		rf.ticker.Stop()
+	}
 	rf.role = 3
 	rf.leaderId = rf.me
 	l := len(rf.nextIndex)
@@ -287,10 +296,22 @@ func (rf *Raft) transitionToLeader() {
 	go rf.heartbeat(rf.leaderHb)
 }
 
+func (rf *Raft) transitionToCandidate() {
+	if rf.ticker != nil {
+		rf.ticker.Stop()
+	}
+	rf.role = 2
+	rf.updateTime = time.Now()
+	DPrintf("[%v]-[%d] update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, rf.currentTerm+1)
+	rf.currentTerm += 1
+	go rf.timeout(rf.candidateHb)
+}
+
 func (rf *Raft) transitionToFollower() {
 	if rf.ticker != nil {
 		rf.ticker.Stop()
 	}
+	rf.role = 1
 	go rf.timeout(rf.followerHb)
 }
 
@@ -301,24 +322,24 @@ func (rf *Raft) calElectionTimeout() int64 {
 
 func (rf *Raft) logMatch(logEntries []LogEntry, prevTerm int, prevIndex int) bool {
 
-	if len(logEntries) == 0 {
-		return true
+	flag := true
+
+	if prevIndex > len(rf.log)-1 {
+		flag = false
+	} else {
+		prev := rf.log[prevIndex]
+		if prev.Term != prevTerm {
+			flag = false
+		} else {
+			entry := logEntries[0]
+			if entry.Index <= len(rf.log)-1 && rf.log[entry.Index].Term != entry.Term {
+				rf.log = rf.log[:entry.Index]
+			}
+		}
 	}
 
-	prev := rf.log[prevIndex]
-	if prev.Term != prevTerm {
-		return false
+	if !flag {
+		DPrintf("prevIndex:[%d],prevTerm:[%d],requestEntry:[%+v],myLog:[%+v]", prevIndex, prevTerm, logEntries[0], rf.log)
 	}
-
-	entry := logEntries[0]
-
-	if entry.Index == len(rf.log) {
-		return true
-	}
-
-	if rf.log[entry.Index].Term != entry.Term {
-		rf.log = rf.log[:entry.Index]
-	}
-
-	return true
+	return flag
 }

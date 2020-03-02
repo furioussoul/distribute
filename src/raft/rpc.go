@@ -88,6 +88,7 @@ func (rf *Raft) sendAppendEntries(server int, args *RequestAppendEntries, reply 
 }
 
 func (rf *Raft) vote() {
+	rf.votedFor = rf.me
 	DPrintf("[%d] election start[role:%d][term:%d][votefor:%d]\n", rf.me, rf.role, rf.currentTerm, rf.votedFor)
 	peers := rf.peers
 	quorum := 0
@@ -100,8 +101,10 @@ func (rf *Raft) vote() {
 		go func(j int) {
 
 			args := RequestVoteArgs{
-				Term:        rf.currentTerm,
-				CandidateId: rf.me,
+				Term:         rf.currentTerm,
+				CandidateId:  rf.me,
+				LastLogTerm:  rf.log[len(rf.log)-1].Term,
+				LastLogIndex: len(rf.log) - 1,
 			}
 			reply := RequestVoteReply{}
 
@@ -124,19 +127,17 @@ func (rf *Raft) vote() {
 
 			} else if voteCount == len(peers)-1 {
 				//election complete voteCount be equals to peers count -1
-				DPrintf("[%d] election #lose transition to follower [term:%d]\n", rf.me, rf.currentTerm)
-				rf.transitionToFollower()
+				DPrintf("[%d] election #lose [term:%d]\n", rf.me, rf.currentTerm)
+				rf.votedFor = -1
+				rf.leaderId = -1
+				go rf.timeout(rf.candidateHb)
 			}
 		}(i)
 	}
 }
 
-func (rf *Raft) appendLogToLocal(command interface{}) (index int, term int) {
-	entry := LogEntry{
-		Term:    rf.currentTerm,
-		Index:   len(rf.log),
-		Command: command,
-	}
+func (rf *Raft) appendLogToLocal(entry LogEntry) (index int, term int) {
+
 	rf.log = append(rf.log, entry)
 	DPrintf("[%d]-appendLogToLocal-[%+v]\n", rf.me, entry)
 	index = entry.Index
@@ -144,90 +145,104 @@ func (rf *Raft) appendLogToLocal(command interface{}) (index int, term int) {
 	return
 }
 
-func (rf *Raft) appendEmpty() {
-	for i := range rf.peers {
-		if i == rf.me {
-			continue
+func (rf *Raft) appendEmpty(i int) {
+
+	go func(j int) {
+		reply := ReplyAppendEntries{}
+		request := RequestAppendEntries{
+			Term:     rf.currentTerm,
+			LeaderId: rf.me,
 		}
-		go func(j int) {
-			reply := ReplyAppendEntries{}
-			request := RequestAppendEntries{
-				Term:     rf.currentTerm,
-				LeaderId: rf.me,
-			}
-			//DPrintf("appendEmptyLog [%+v]\n", request)
-			ok := rf.sendAppendEntries(j, &request, &reply)
+		//DPrintf("appendEmptyLog [%+v]\n", request)
+		ok := rf.sendAppendEntries(j, &request, &reply)
 
-			if !ok {
-				return
-			}
+		if !ok {
+			return
+		}
 
-			if reply.Term > rf.currentTerm {
-				rf.lock.Lock()
-				rf.role = 1
-				rf.updateTime = time.Now()
-				DPrintf("[%v]-[%d] update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
-				rf.currentTerm = reply.Term
-				rf.transitionToFollower()
-				rf.lock.Unlock()
-			}
-		}(i)
-	}
+		if reply.Term > rf.currentTerm {
+			rf.lock.Lock()
+			rf.role = 1
+			rf.updateTime = time.Now()
+			DPrintf("[%v]-[%d] update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
+			rf.currentTerm = reply.Term
+			rf.transitionToFollower()
+			rf.lock.Unlock()
+		}
+	}(i)
 }
 
-func (rf *Raft) appendToMembers() {
+func (rf *Raft) appendToMembers(i int) {
 
-	for i := range rf.peers {
-		if i == rf.me {
-			continue
-		}
-		go func(j int) {
+	DPrintf("[%d] to [%d] matchIndex [%+v] , nextIndex [%+v], log.len [%d]",
+		rf.me, i, rf.matchIndex, rf.nextIndex, len(rf.log))
 
-			if rf.nextIndex[j] != len(rf.log)-1 {
-				return
-			}
-
-			prev := rf.log[rf.nextIndex[j]-1]
-			entry := rf.log[rf.nextIndex[j]]
-
-			reply := ReplyAppendEntries{}
-			request := RequestAppendEntries{
-				Term:         rf.currentTerm,
-				LeaderId:     rf.me,
-				Entries:      []LogEntry{entry},
-				PrevLogIndex: prev.Index,
-				PrevLogTerm:  prev.Term,
-				LeaderCommit: rf.commitIndex,
-			}
-
-			DPrintf("[%d] appendEntryLog to [%d] [%+v]\n", rf.me, j, request)
-
-			ok := rf.sendAppendEntries(j, &request, &reply)
-
-			if !ok {
-				return
-			}
-
-			if reply.Term > rf.currentTerm {
-				rf.lock.Lock()
-				rf.role = 1
-				rf.updateTime = time.Now()
-				DPrintf("[%v]-[%d] update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
-				rf.currentTerm = reply.Term
-				rf.transitionToFollower()
-				rf.lock.Unlock()
-			} else {
-				rf.lock.Lock()
-				if reply.Success {
-					rf.matchIndex[j] = rf.nextIndex[j]
-					rf.nextIndex[j]++
-				} else {
-					rf.nextIndex[j]--
-				}
-				rf.lock.Unlock()
-			}
-		}(i)
+	if rf.matchIndex[i] >= rf.nextIndex[i] || rf.matchIndex[i] >= len(rf.log)-1 {
+		return
 	}
+
+	go func(j int) {
+
+		prevIndex := rf.nextIndex[j] - 1
+		logIndex := rf.nextIndex[j]
+		if rf.nextIndex[i] == len(rf.log) {
+			prevIndex--
+			logIndex--
+		}
+
+		prev := rf.log[prevIndex]
+		entry := rf.log[logIndex]
+
+		reply := ReplyAppendEntries{}
+		request := RequestAppendEntries{
+			Term:         rf.currentTerm,
+			LeaderId:     rf.me,
+			Entries:      []LogEntry{entry},
+			PrevLogIndex: prev.Index,
+			PrevLogTerm:  prev.Term,
+			LeaderCommit: rf.commitIndex,
+		}
+
+		ok := rf.sendAppendEntries(j, &request, &reply)
+
+		if !ok {
+			return
+		}
+
+		if reply.Term > rf.currentTerm {
+			rf.lock.Lock()
+			rf.role = 1
+			rf.updateTime = time.Now()
+			DPrintf("[%v]-[%d] update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
+			rf.currentTerm = reply.Term
+			rf.transitionToFollower()
+			rf.lock.Unlock()
+		} else {
+			rf.lock.Lock()
+			if reply.Success {
+				rf.matchIndex[j] = logIndex
+				rf.nextIndex[j]++
+			} else {
+				rf.nextIndex[j]--
+			}
+			rf.lock.Unlock()
+		}
+	}(i)
+}
+
+func (rf *Raft) logNewer(args *RequestVoteArgs) bool {
+
+	flag := false
+
+	if args.LastLogTerm > rf.log[len(rf.log)-1].Term {
+		flag = true
+	} else if args.LastLogTerm == rf.log[len(rf.log)-1].Term && args.LastLogIndex >= len(rf.log)-1 {
+		flag = true
+	} else {
+		flag = false
+	}
+
+	return flag
 }
 
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
@@ -236,27 +251,36 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	//two nodes vote at the same time may cause this raft node vote for two member ,so we have to lock
 	rf.lock.Lock()
 	defer rf.lock.Unlock()
-	//Raft 通过比较两份日志中最后一条日志条目的索引值和任期号定义谁的日志比较新。
-	//如果两份日志最后的条目的任期号不同，那么任期号大的日志更加新。如果两份日志最后的条目任期号相同，那么日志比较长的那个就更加新。
-	if args.Term > rf.currentTerm {
-		DPrintf("[%d] grant [%d]  [currentTerm:%d][requestTerm:%d]\n", rf.me, args.CandidateId, rf.currentTerm, args.Term)
-		rf.updateTime = time.Now()
-		DPrintf("[%v]-[%d] update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, args.Term)
-		rf.currentTerm = args.Term
-		rf.votedFor = args.CandidateId
-		reply.Term = rf.currentTerm
-		reply.VoteGranted = true
 
-	} else if args.Term == rf.currentTerm && (rf.votedFor == -1 || rf.votedFor == args.CandidateId) {
+	if args.Term < rf.currentTerm {
+
+		reply.Term = rf.currentTerm
+		reply.VoteGranted = false
+		DPrintf("[%d] reject [%d] [currentTerm:%d][requestTerm:%d]\n", rf.me, args.CandidateId, rf.currentTerm, args.Term)
+
+	} else if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && rf.logNewer(args) {
+		//Raft 通过比较两份日志中最后一条日志条目的索引值和任期号定义谁的日志比较新。
+		//如果两份日志最后的条目的任期号不同，那么任期号大的日志更加新。如果两份日志最后的条目任期号相同，那么日志比较长的那个就更加新。
+
 		DPrintf("[%d] grant [%d] [currentTerm:%d][requestTerm:%d]\n", rf.me, args.CandidateId, rf.currentTerm, args.Term)
 		rf.votedFor = args.CandidateId
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = true
 
-	} else {
-		reply.Term = rf.currentTerm
-		reply.VoteGranted = false
-		DPrintf("[%d] reject [%d] [currentTerm:%d][requestTerm:%d]\n", rf.me, args.CandidateId, rf.currentTerm, args.Term)
+		if args.Term > rf.currentTerm {
+			DPrintf("[%d] grant [%d]  [currentTerm:%d][requestTerm:%d]\n", rf.me, args.CandidateId, rf.currentTerm, args.Term)
+			rf.updateTime = time.Now()
+			DPrintf("[%v]-[%d] update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, args.Term)
+			rf.currentTerm = args.Term
+			rf.votedFor = args.CandidateId
+			reply.Term = rf.currentTerm
+			reply.VoteGranted = true
+		}
+	}
+
+	if args.Term > rf.currentTerm {
+		rf.currentTerm = args.Term
+		DPrintf("[%d] transition to follower [term:%d]\n", rf.me, rf.currentTerm)
 	}
 }
 
@@ -269,7 +293,7 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 		reply.Success = false
 		reply.Term = rf.currentTerm
 
-	} else if args.Term >= rf.currentTerm && rf.logMatch(args.Entries, args.PrevLogTerm, args.PrevLogIndex) {
+	} else if len(args.Entries) == 0 || rf.logMatch(args.Entries, args.PrevLogTerm, args.PrevLogIndex) {
 		if args.Term > rf.currentTerm {
 			rf.currentTerm = args.Term
 		}
@@ -285,7 +309,7 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 		if len(args.Entries) > 0 {
 			DPrintf("[%d] accept [%d]'s append-[%+v]\n", rf.me, args.LeaderId, args)
 			entry := args.Entries[0]
-			rf.appendLogToLocal(entry.Command)
+			rf.appendLogToLocal(entry)
 			msg := ApplyMsg{
 				CommandValid: true,
 				CommandIndex: entry.Index,
@@ -297,8 +321,12 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 		reply.Term = rf.currentTerm
 		reply.Success = true
 
-	} else {
-		reply.Success = false
-		reply.Term = rf.currentTerm
+	} else if !rf.logMatch(args.Entries, args.PrevLogTerm, args.PrevLogIndex) {
+		DPrintf("[%d] reject [%d]'s append-[%+v]\n", rf.me, args.LeaderId, args)
+	}
+
+	if args.Term > rf.currentTerm {
+		rf.currentTerm = args.Term
+		DPrintf("[%d] transition to follower [term:%d]\n", rf.me, rf.currentTerm)
 	}
 }
