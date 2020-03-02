@@ -91,7 +91,7 @@ func (rf *Raft) vote() {
 	rf.votedFor = rf.me
 	DPrintf("[%d] election start[role:%d][term:%d][votefor:%d]\n", rf.me, rf.role, rf.currentTerm, rf.votedFor)
 	peers := rf.peers
-	quorum := 0
+	quorum := 1
 	voteCount := 0
 
 	for i := range peers {
@@ -125,7 +125,7 @@ func (rf *Raft) vote() {
 				DPrintf("[%d] election #win transition to leader [term:%d]\n", rf.me, rf.currentTerm)
 				rf.transitionToLeader()
 
-			} else if voteCount == len(peers)-1 {
+			} else if voteCount == len(peers)-1 && rf.role != 3 {
 				//election complete voteCount be equals to peers count -1
 				DPrintf("[%d] election #lose [term:%d]\n", rf.me, rf.currentTerm)
 				rf.votedFor = -1
@@ -150,8 +150,9 @@ func (rf *Raft) appendEmpty(i int) {
 	go func(j int) {
 		reply := ReplyAppendEntries{}
 		request := RequestAppendEntries{
-			Term:     rf.currentTerm,
-			LeaderId: rf.me,
+			Term:         rf.currentTerm,
+			LeaderId:     rf.me,
+			LeaderCommit: rf.commitIndex,
 		}
 		//DPrintf("appendEmptyLog [%+v]\n", request)
 		ok := rf.sendAppendEntries(j, &request, &reply)
@@ -266,16 +267,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.votedFor = args.CandidateId
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = true
-
-		if args.Term > rf.currentTerm {
-			DPrintf("[%d] grant [%d]  [currentTerm:%d][requestTerm:%d]\n", rf.me, args.CandidateId, rf.currentTerm, args.Term)
-			rf.updateTime = time.Now()
-			DPrintf("[%v]-[%d] update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, args.Term)
-			rf.currentTerm = args.Term
-			rf.votedFor = args.CandidateId
-			reply.Term = rf.currentTerm
-			reply.VoteGranted = true
-		}
 	}
 
 	if args.Term > rf.currentTerm {
@@ -308,25 +299,32 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 
 		if len(args.Entries) > 0 {
 			DPrintf("[%d] accept [%d]'s append-[%+v]\n", rf.me, args.LeaderId, args)
-			entry := args.Entries[0]
-			rf.appendLogToLocal(entry)
-			msg := ApplyMsg{
-				CommandValid: true,
-				CommandIndex: entry.Index,
-				Command:      entry.Command,
-			}
-			rf.applyCh <- msg
+			rf.appendLogToLocal(args.Entries[0])
 		}
+
 		rf.transitionToFollower()
 		reply.Term = rf.currentTerm
 		reply.Success = true
 
 	} else if !rf.logMatch(args.Entries, args.PrevLogTerm, args.PrevLogIndex) {
 		DPrintf("[%d] reject [%d]'s append-[%+v]\n", rf.me, args.LeaderId, args)
+		reply.Success = false
+	}
+
+	if args.LeaderCommit > rf.commitIndex {
+		rf.commitIndex = min(args.LeaderCommit, len(rf.log)-1)
+		msg := ApplyMsg{
+			CommandValid: true,
+			CommandIndex: rf.log[rf.commitIndex].Index,
+			Command:      rf.log[rf.commitIndex].Command,
+		}
+		DPrintf("[%d] commit index:[%d]\n", rf.me, rf.commitIndex)
+		rf.applyCh <- msg
 	}
 
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
 		DPrintf("[%d] transition to follower [term:%d]\n", rf.me, rf.currentTerm)
+		rf.transitionToFollower()
 	}
 }

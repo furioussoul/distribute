@@ -186,7 +186,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 	rf.sessions = make(map[interface{}]bool)
-	go rf.transitionToFollower()
+	rf.transitionToFollower()
 
 	DPrintf("[node:%d][role:%d][term:%d]start\n", rf.me, rf.role, rf.currentTerm)
 
@@ -256,20 +256,26 @@ func (rf *Raft) resetCommitIndex() {
 	agree := 0
 
 	for i := len(ids) - 1; i >= 0; i-- {
+
 		tmp := ids[i]
-		for j := range ids {
+
+		for j := len(ids) - 1; j >= 0; j-- {
 			if tmp <= ids[j] {
+				//DPrintf("[%d] [%d] [%d] [%+v]", tmp,ids[j],j,ids)
 				agree++
 			}
 		}
-		if agree >= len(rf.peers)-1 {
+
+		if agree >= len(rf.peers)/2+1 {
 			agreeIndex = tmp
 			break
+		} else {
+			agree = 0
 		}
 	}
 
 	if agreeIndex > rf.commitIndex {
-		DPrintf("[%d] commit [%d] [%+v]\n", rf.me, agreeIndex, ids)
+		DPrintf("[%d] commit index:[%d] ids:[%+v]\n", rf.me, agreeIndex, ids)
 
 		rf.commitIndex = agreeIndex
 		entry := rf.log[agreeIndex]

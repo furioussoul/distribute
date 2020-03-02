@@ -41,7 +41,7 @@ func TestInitialElection2A(t *testing.T) {
 	time.Sleep(2 * RaftElectionTimeout)
 	term2 := cfg.checkTerms()
 	if term1 != term2 {
-		fmt.Printf("warning: Term changed even though there were no failures")
+		DPrintf("warning: Term changed even though there were no failures")
 	}
 
 	// there should still be a leader.
@@ -164,7 +164,7 @@ func TestFailAgree2B(t *testing.T) {
 	DPrintf("kill [%d]\n", (leader+1)%servers)
 	cfg.disconnect((leader + 1) % servers)
 
-	fmt.Println("pass -------1--------")
+	DPrintf("pass -------1--------")
 
 	// the leader and remaining follower should be
 	// able to agree despite the disconnected follower.
@@ -175,7 +175,7 @@ func TestFailAgree2B(t *testing.T) {
 	cfg.one(104, servers-1, false)
 	cfg.one(105, servers-1, false)
 
-	fmt.Println("pass -------2--------")
+	DPrintf("pass -------2--------")
 
 	// re-connect
 	cfg.connect((leader + 1) % servers)
@@ -186,7 +186,7 @@ func TestFailAgree2B(t *testing.T) {
 	// on new commands.
 	cfg.one(106, servers, true)
 
-	fmt.Println("pass -------3--------")
+	DPrintf("pass -------3--------")
 	time.Sleep(RaftElectionTimeout)
 	cfg.one(107, servers, true)
 
@@ -204,8 +204,11 @@ func TestFailNoAgree2B(t *testing.T) {
 
 	// 3 of 5 followers disconnect
 	leader := cfg.checkOneLeader()
+	DPrintf("kill [%d]", (leader+1)%servers)
 	cfg.disconnect((leader + 1) % servers)
+	DPrintf("kill [%d]", (leader+2)%servers)
 	cfg.disconnect((leader + 2) % servers)
+	DPrintf("kill [%d]", (leader+3)%servers)
 	cfg.disconnect((leader + 3) % servers)
 
 	index, _, ok := cfg.rafts[leader].Start(20)
@@ -216,12 +219,16 @@ func TestFailNoAgree2B(t *testing.T) {
 		t.Fatalf("expected index 2, got %v", index)
 	}
 
+	fmt.Println("pass -------1--------")
+
 	time.Sleep(2 * RaftElectionTimeout)
 
 	n, _ := cfg.nCommitted(index)
 	if n > 0 {
 		t.Fatalf("%v committed but no majority", n)
 	}
+
+	fmt.Println("pass -------2--------")
 
 	// repair
 	cfg.connect((leader + 1) % servers)
@@ -231,6 +238,9 @@ func TestFailNoAgree2B(t *testing.T) {
 	// the disconnected majority may have chosen a leader from
 	// among their own ranks, forgetting index 2.
 	leader2 := cfg.checkOneLeader()
+
+	fmt.Println("pass -------3--------")
+
 	index2, _, ok2 := cfg.rafts[leader2].Start(30)
 	if ok2 == false {
 		t.Fatalf("leader2 rejected Start()")
