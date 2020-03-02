@@ -308,16 +308,19 @@ func (rf *Raft) transitionToCandidate() {
 	}
 	rf.role = 2
 	rf.updateTime = time.Now()
-	DPrintf("[%v]-[%d] update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, rf.currentTerm+1)
+	DPrintf("[%v]-[%d] transitionToCandidate update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, rf.currentTerm+1)
 	rf.currentTerm += 1
 	go rf.timeout(rf.candidateHb)
 }
 
 func (rf *Raft) transitionToFollower() {
+	if rf.role != 1 {
+		rf.role = 1
+		DPrintf("[%d] transition to follower [term:%d]\n", rf.me, rf.currentTerm)
+	}
 	if rf.ticker != nil {
 		rf.ticker.Stop()
 	}
-	rf.role = 1
 	go rf.timeout(rf.followerHb)
 }
 
@@ -345,7 +348,7 @@ func (rf *Raft) logMatch(logEntries []LogEntry, prevTerm int, prevIndex int) boo
 	}
 
 	if !flag {
-		DPrintf("prevIndex:[%d],prevTerm:[%d],requestEntry:[%+v],myLog:[%+v]", prevIndex, prevTerm, logEntries[0], rf.log)
+		DPrintf("[%d] log mismatch, prevIndex:[%d],prevTerm:[%d],requestEntry:[%+v],myLog:[%+v]", rf.me, prevIndex, prevTerm, logEntries[0], rf.log)
 	}
 	return flag
 }

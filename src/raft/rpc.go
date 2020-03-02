@@ -117,7 +117,7 @@ func (rf *Raft) vote() {
 			} else if reply.Term > rf.currentTerm {
 				rf.role = 1
 				rf.updateTime = time.Now()
-				DPrintf("[%v]-[%d] update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
+				DPrintf("[%v]-[%d] vote update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
 				rf.currentTerm = reply.Term
 			}
 
@@ -165,7 +165,7 @@ func (rf *Raft) appendEmpty(i int) {
 			rf.lock.Lock()
 			rf.role = 1
 			rf.updateTime = time.Now()
-			DPrintf("[%v]-[%d] update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
+			DPrintf("[%v]-[%d] appendEmpty update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
 			rf.currentTerm = reply.Term
 			rf.transitionToFollower()
 			rf.lock.Unlock()
@@ -177,10 +177,6 @@ func (rf *Raft) appendToMembers(i int) {
 
 	DPrintf("[%d] to [%d] matchIndex [%+v] , nextIndex [%+v], log.len [%d]",
 		rf.me, i, rf.matchIndex, rf.nextIndex, len(rf.log))
-
-	if rf.matchIndex[i] >= rf.nextIndex[i] || rf.matchIndex[i] >= len(rf.log)-1 {
-		return
-	}
 
 	go func(j int) {
 
@@ -204,6 +200,8 @@ func (rf *Raft) appendToMembers(i int) {
 			LeaderCommit: rf.commitIndex,
 		}
 
+		DPrintf("[%d] request:[%+v], log:[%+v]", rf.me, request, rf.log)
+
 		ok := rf.sendAppendEntries(j, &request, &reply)
 
 		if !ok {
@@ -214,7 +212,7 @@ func (rf *Raft) appendToMembers(i int) {
 			rf.lock.Lock()
 			rf.role = 1
 			rf.updateTime = time.Now()
-			DPrintf("[%v]-[%d] update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
+			DPrintf("[%v]-[%d] appendToMembers update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
 			rf.currentTerm = reply.Term
 			rf.transitionToFollower()
 			rf.lock.Unlock()
@@ -271,7 +269,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
-		DPrintf("[%d] transition to follower [term:%d]\n", rf.me, rf.currentTerm)
+		rf.transitionToFollower()
 	}
 }
 
@@ -293,7 +291,7 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 		}
 		rf.updateTime = time.Now()
 		if rf.currentTerm != args.Term {
-			DPrintf("[%v]-[%d] update term from [%d] to [%d]; leader from [%d] to [%d]\n",
+			DPrintf("[%v]-[%d] AppendEntries update term from [%d] to [%d]; leader from [%d] to [%d]\n",
 				rf.updateTime, rf.me, rf.currentTerm, args.Term, rf.leaderId, args.LeaderId)
 		}
 
@@ -306,7 +304,7 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 		reply.Term = rf.currentTerm
 		reply.Success = true
 
-	} else if !rf.logMatch(args.Entries, args.PrevLogTerm, args.PrevLogIndex) {
+	} else {
 		DPrintf("[%d] reject [%d]'s append-[%+v]\n", rf.me, args.LeaderId, args)
 		reply.Success = false
 	}
@@ -324,7 +322,6 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
-		DPrintf("[%d] transition to follower [term:%d]\n", rf.me, rf.currentTerm)
 		rf.transitionToFollower()
 	}
 }
