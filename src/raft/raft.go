@@ -19,6 +19,7 @@ package raft
 
 import (
 	"math/rand"
+	"sort"
 	"sync"
 	"time"
 )
@@ -49,12 +50,13 @@ type ApplyMsg struct {
 // A Go object implementing a single Raft peer.
 //
 type Raft struct {
-	mu        sync.Mutex // Lock to protect shared access to this peer's state
-	lock      sync.Mutex
-	peers     []*labrpc.ClientEnd // RPC end points of all peers
-	persister *Persister          // Object to hold this peer's persisted state
-	me        int                 // this peer's index into peers[]
-	dead      int32               // set by Kill()
+	mu           sync.Mutex // Lock to protect shared access to this peer's state
+	lock         sync.Mutex
+	appenderLock sync.Mutex
+	peers        []*labrpc.ClientEnd // RPC end points of all peers
+	persister    *Persister          // Object to hold this peer's persisted state
+	me           int                 // this peer's index into peers[]
+	dead         int32               // set by Kill()
 
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
@@ -80,6 +82,7 @@ type Raft struct {
 	matchIndex  []int
 	updateTime  time.Time
 	applyCh     chan ApplyMsg
+	sessions    map[interface{}]bool
 }
 
 type LogEntry struct {
@@ -104,30 +107,21 @@ type LogEntry struct {
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.lock.Lock()
+	defer rf.lock.Unlock()
 	index := -1
 	term := -1
 	isLeader := rf.me == rf.leaderId
 
 	// Your code here (2B).
-
 	if isLeader {
-		prev, entry := rf.appendLog(command)
-
-		request := RequestAppendEntries{
-			Term:         rf.currentTerm,
-			LeaderId:     rf.me,
-			Entries:      []LogEntry{entry},
-			PrevLogIndex: prev.Index,
-			PrevLogTerm:  prev.Term,
-			LeaderCommit: rf.commitIndex,
+		if !rf.sessions[command] {
+			rf.sessions[command] = true
+		} else {
+			return -1, -1, false
 		}
-		reply := ReplyAppendEntries{}
-		index = entry.Index
-		term = entry.Term
-		rf.append(request, reply)
+		index, term = rf.appendLogToLocal(command)
+		rf.appendToMembers()
 	}
-
-	rf.lock.Unlock()
 
 	return index, term, isLeader
 }
@@ -174,7 +168,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.applyCh = applyCh
 	rf.role = 1
 	rf.heartBeatInterval = 20 * time.Millisecond
-	rf.electionTimeout = 150 * time.Millisecond
+	rf.electionTimeout = 200 * time.Millisecond
 	rf.votedFor = -1
 	rf.leaderId = -1
 	rf.updateTime = time.Now()
@@ -185,7 +179,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.matchIndex = make([]int, len(peers))
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
-
+	rf.sessions = make(map[interface{}]bool)
 	go rf.transitionToFollower()
 
 	DPrintf("[node:%d][role:%d][term:%d]start\n", rf.me, rf.role, rf.currentTerm)
@@ -233,16 +227,71 @@ func (rf *Raft) candidateHb() {
 }
 
 func (rf *Raft) leaderHb() {
-	rf.role = 3
 	rf.appendEmpty()
+	rf.resetCommitIndex()
+}
+
+func (rf *Raft) resetCommitIndex() {
+
+	ids := make([]int, 0)
+
+	ids = append(ids, len(rf.log)-1)
+	for i := range rf.peers {
+		if rf.me != i {
+			ids = append(ids, rf.matchIndex[i])
+		}
+	}
+
+	sort.Ints(ids)
+
+	DPrintf("ids-[%+v]", ids)
+
+	agreeIndex := 0
+	agree := 0
+
+	for i := len(ids) - 1; i >= 0; i-- {
+		tmp := ids[i]
+		for j := range ids {
+			if tmp <= ids[j] {
+				agree++
+			}
+		}
+		if agree >= len(rf.peers)-1 {
+			agreeIndex = tmp
+			break
+		}
+	}
+
+	if agreeIndex > rf.commitIndex {
+		DPrintf("[%d] commit [%d] [%+v]\n", rf.me, agreeIndex, ids)
+
+		rf.commitIndex = agreeIndex
+		entry := rf.log[agreeIndex]
+		msg := ApplyMsg{
+			CommandValid: true,
+			CommandIndex: entry.Index,
+			Command:      entry.Command,
+		}
+		rf.applyCh <- msg
+	}
+}
+
+func (rf *Raft) transitionToLeader() {
+	rf.role = 3
+	rf.leaderId = rf.me
+	l := len(rf.nextIndex)
+	for i := 0; i < l; i++ {
+		rf.nextIndex[i] = len(rf.log)
+		rf.matchIndex[i] = 0
+	}
+	go rf.heartbeat(rf.leaderHb)
 }
 
 func (rf *Raft) transitionToFollower() {
 	if rf.ticker != nil {
 		rf.ticker.Stop()
 	}
-	rf.role = 1
-	rf.timeout(rf.followerHb)
+	go rf.timeout(rf.followerHb)
 }
 
 func (rf *Raft) calElectionTimeout() int64 {
@@ -250,6 +299,26 @@ func (rf *Raft) calElectionTimeout() int64 {
 	return n
 }
 
-func (rf *Raft) logMatch([]LogEntry, int, int) bool {
+func (rf *Raft) logMatch(logEntries []LogEntry, prevTerm int, prevIndex int) bool {
+
+	if len(logEntries) == 0 {
+		return true
+	}
+
+	prev := rf.log[prevIndex]
+	if prev.Term != prevTerm {
+		return false
+	}
+
+	entry := logEntries[0]
+
+	if entry.Index == len(rf.log) {
+		return true
+	}
+
+	if rf.log[entry.Index].Term != entry.Term {
+		rf.log = rf.log[:entry.Index]
+	}
+
 	return true
 }
