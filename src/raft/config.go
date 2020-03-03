@@ -188,6 +188,8 @@ func (cfg *config) start1(i int) {
 				cfg.mu.Unlock()
 
 				if m.CommandIndex > 1 && prevok == false {
+					fmt.Println(cfg.rafts[i].log)
+					fmt.Println(cfg.logs[i])
 					err_msg = fmt.Sprintf("server %v apply out of order %v", i, m.CommandIndex)
 				}
 			}

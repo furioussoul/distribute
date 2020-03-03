@@ -182,9 +182,18 @@ func (rf *Raft) appendToMembers(i int) {
 
 		prevIndex := rf.nextIndex[j] - 1
 		logIndex := rf.nextIndex[j]
-		if rf.nextIndex[i] == len(rf.log) {
+		if rf.nextIndex[i] >= len(rf.log) {
 			prevIndex--
 			logIndex--
+		}
+
+		for {
+			if logIndex >= len(rf.log) {
+				logIndex--
+				prevIndex--
+			} else {
+				break
+			}
 		}
 
 		prev := rf.log[prevIndex]
@@ -200,7 +209,7 @@ func (rf *Raft) appendToMembers(i int) {
 			LeaderCommit: rf.commitIndex,
 		}
 
-		DPrintf("[%d] request:[%+v], log:[%+v]", rf.me, request, rf.log)
+		//DPrintf("[%d] request:[%+v], log:[%+v]", rf.me, request, rf.log)
 
 		ok := rf.sendAppendEntries(j, &request, &reply)
 
@@ -310,14 +319,19 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 	}
 
 	if args.LeaderCommit > rf.commitIndex {
+		prevCommitIndex := rf.commitIndex
 		rf.commitIndex = min(args.LeaderCommit, len(rf.log)-1)
-		msg := ApplyMsg{
-			CommandValid: true,
-			CommandIndex: rf.log[rf.commitIndex].Index,
-			Command:      rf.log[rf.commitIndex].Command,
+		if rf.commitIndex > prevCommitIndex {
+			for i := prevCommitIndex + 1; i <= rf.commitIndex; i++ {
+				msg := ApplyMsg{
+					CommandValid: true,
+					CommandIndex: rf.log[i].Index,
+					Command:      rf.log[i].Command,
+				}
+				DPrintf("[%d] commit index:[%d]\n", rf.me, i)
+				rf.applyCh <- msg
+			}
 		}
-		DPrintf("[%d] commit index:[%d]\n", rf.me, rf.commitIndex)
-		rf.applyCh <- msg
 	}
 
 	if args.Term > rf.currentTerm {

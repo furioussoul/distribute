@@ -8,7 +8,13 @@ package raft
 // test with the original before submitting.
 //
 
-import "testing"
+import (
+	"bufio"
+	"io"
+	"os"
+	"strings"
+	"testing"
+)
 import "fmt"
 import "time"
 import "math/rand"
@@ -1008,4 +1014,28 @@ func TestReliableChurn2C(t *testing.T) {
 
 func TestUnreliableChurn2C(t *testing.T) {
 	internalChurn(t, true)
+}
+
+func TestRead(t *testing.T) {
+
+	f, err := os.Open("/Users/szj/Downloads/test_data/list.txt")
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	defer f.Close()
+	buf := bufio.NewReader(f)
+	for {
+		line, err := buf.ReadString('\n')
+		line = strings.TrimSpace(line)
+		fmt.Println(line)
+		if err != nil {
+			if err == io.EOF {
+				fmt.Println("File read ok!")
+				break
+			} else {
+				fmt.Println("Read file error!", err)
+				return
+			}
+		}
+	}
 }
