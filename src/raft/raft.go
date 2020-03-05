@@ -173,7 +173,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 	rf.applyCh = applyCh
 	rf.role = 1
-	rf.heartBeatInterval = 20 * time.Millisecond
+	rf.heartBeatInterval = 40 * time.Millisecond
 	rf.electionTimeout = 200 * time.Millisecond
 	rf.votedFor = -1
 	rf.leaderId = -1
