@@ -114,11 +114,11 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	// Your code here (2B).
 	if isLeader {
-		if !rf.sessions[command] {
-			rf.sessions[command] = true
-		} else {
-			return -1, -1, false
-		}
+		//if !rf.sessions[command] {
+		//	rf.sessions[command] = true
+		//} else {
+		//	return -1, -1, false
+		//}
 
 		entry := LogEntry{
 			Term:    rf.currentTerm,
@@ -274,6 +274,7 @@ func (rf *Raft) resetCommitIndex() {
 		}
 	}
 
+	DPrintf("[%d],agreeIndex:[%d],commitIndex:[%d]", rf.me, agreeIndex, rf.commitIndex)
 	if agreeIndex > rf.commitIndex {
 		DPrintf("[%d] commit index:[%d] ids:[%+v]\n", rf.me, agreeIndex, ids)
 
@@ -289,6 +290,8 @@ func (rf *Raft) resetCommitIndex() {
 }
 
 func (rf *Raft) transitionToLeader() {
+	DPrintf("[%d] election #win transition to leader [term:%d]\n", rf.me, rf.currentTerm)
+
 	if rf.ticker != nil {
 		rf.ticker.Stop()
 	}
@@ -339,16 +342,11 @@ func (rf *Raft) logMatch(logEntries []LogEntry, prevTerm int, prevIndex int) boo
 		prev := rf.log[prevIndex]
 		if prev.Term != prevTerm {
 			flag = false
-		} else {
-			entry := logEntries[0]
-			if entry.Index <= len(rf.log)-1 && rf.log[entry.Index].Term != entry.Term {
-				rf.log = rf.log[:entry.Index]
-			}
 		}
 	}
 
 	if !flag {
-		DPrintf("[%d] log mismatch, prevIndex:[%d],prevTerm:[%d],requestEntry:[%+v],myLog:[%+v]", rf.me, prevIndex, prevTerm, logEntries[0], rf.log)
+		//DPrintf("[%d] log mismatch, prevIndex:[%d],prevTerm:[%d],requestEntry:[%+v],myLog:[%+v]", rf.me, prevIndex, prevTerm, logEntries[0], rf.log)
 	}
 	return flag
 }

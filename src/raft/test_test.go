@@ -420,6 +420,9 @@ func TestBackup2B(t *testing.T) {
 
 	// put leader and one follower in a partition
 	leader1 := cfg.checkOneLeader()
+	DPrintf("kill:[%d]", (leader1+2)%servers)
+	DPrintf("kill:[%d]", (leader1+3)%servers)
+	DPrintf("kill:[%d]", (leader1+4)%servers)
 	cfg.disconnect((leader1 + 2) % servers)
 	cfg.disconnect((leader1 + 3) % servers)
 	cfg.disconnect((leader1 + 4) % servers)
@@ -431,9 +434,14 @@ func TestBackup2B(t *testing.T) {
 
 	time.Sleep(RaftElectionTimeout / 2)
 
+	DPrintf("kill:[%d]", (leader1+0)%servers)
+	DPrintf("kill:[%d]", (leader1+1)%servers)
 	cfg.disconnect((leader1 + 0) % servers)
 	cfg.disconnect((leader1 + 1) % servers)
 
+	DPrintf("connect:[%d]", (leader1+2)%servers)
+	DPrintf("connect:[%d]", (leader1+3)%servers)
+	DPrintf("connect:[%d]", (leader1+4)%servers)
 	// allow other partition to recover
 	cfg.connect((leader1 + 2) % servers)
 	cfg.connect((leader1 + 3) % servers)
@@ -450,6 +458,8 @@ func TestBackup2B(t *testing.T) {
 	if leader2 == other {
 		other = (leader2 + 1) % servers
 	}
+
+	DPrintf("kill:[%d]", other)
 	cfg.disconnect(other)
 
 	// lots more commands that won't commit
@@ -457,23 +467,36 @@ func TestBackup2B(t *testing.T) {
 		cfg.rafts[leader2].Start(rand.Int())
 	}
 
+	fmt.Println("pass -------1--------")
+
 	time.Sleep(RaftElectionTimeout / 2)
 
 	// bring original leader back to life,
 	for i := 0; i < servers; i++ {
+		DPrintf("kill:[%d]", i)
 		cfg.disconnect(i)
 	}
+
+	DPrintf("connect:[%d]", (leader1+0)%servers)
+	DPrintf("connect:[%d]", (leader1+1)%servers)
+	DPrintf("connect:[%d]", other)
+
 	cfg.connect((leader1 + 0) % servers)
 	cfg.connect((leader1 + 1) % servers)
 	cfg.connect(other)
+
+	fmt.Println("pass -------2--------")
 
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
 		cfg.one(rand.Int(), 3, true)
 	}
 
+	fmt.Println("pass -------3--------")
+
 	// now everyone
 	for i := 0; i < servers; i++ {
+		DPrintf("connect:[%d]", i)
 		cfg.connect(i)
 	}
 	cfg.one(rand.Int(), servers, true)

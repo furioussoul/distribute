@@ -109,6 +109,7 @@ func (rf *Raft) vote() {
 			reply := RequestVoteReply{}
 
 			ok := rf.sendRequestVote(j, &args, &reply)
+
 			//DPrintf("[%d] sent vote to [%d] reply-[Term:%d][VoteGranted:%v]\n", rf.me, j, reply.Term, reply.VoteGranted)
 			voteCount += 1
 
@@ -122,8 +123,9 @@ func (rf *Raft) vote() {
 			}
 
 			if quorum == len(rf.peers)/2+1 {
-				DPrintf("[%d] election #win transition to leader [term:%d]\n", rf.me, rf.currentTerm)
-				rf.transitionToLeader()
+				if rf.role != 3 {
+					rf.transitionToLeader()
+				}
 
 			} else if voteCount == len(peers)-1 && rf.role != 3 {
 				//election complete voteCount be equals to peers count -1
@@ -132,11 +134,15 @@ func (rf *Raft) vote() {
 				rf.leaderId = -1
 				go rf.timeout(rf.candidateHb)
 			}
+
 		}(i)
 	}
 }
 
 func (rf *Raft) appendLogToLocal(entry LogEntry) (index int, term int) {
+	if entry.Index <= len(rf.log)-1 && rf.log[entry.Index].Term != entry.Term {
+		rf.log = rf.log[:entry.Index]
+	}
 
 	rf.log = append(rf.log, entry)
 	DPrintf("[%d]-appendLogToLocal-[%+v]\n", rf.me, entry)
@@ -175,8 +181,8 @@ func (rf *Raft) appendEmpty(i int) {
 
 func (rf *Raft) appendToMembers(i int) {
 
-	DPrintf("[%d] to [%d] matchIndex [%+v] , nextIndex [%+v], log.len [%d]",
-		rf.me, i, rf.matchIndex, rf.nextIndex, len(rf.log))
+	//DPrintf("[%d] to [%d] matchIndex [%+v] , nextIndex [%+v], log.len [%d]",
+	//	rf.me, i, rf.matchIndex, rf.nextIndex, len(rf.log))
 
 	go func(j int) {
 
@@ -290,8 +296,10 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 	if args.Term < rf.currentTerm {
 		reply.Success = false
 		reply.Term = rf.currentTerm
+		return
 
-	} else if len(args.Entries) == 0 || rf.logMatch(args.Entries, args.PrevLogTerm, args.PrevLogIndex) {
+	}
+	if len(args.Entries) == 0 || rf.logMatch(args.Entries, args.PrevLogTerm, args.PrevLogIndex) {
 		if args.Term > rf.currentTerm {
 			rf.currentTerm = args.Term
 		}
@@ -313,25 +321,26 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 		reply.Term = rf.currentTerm
 		reply.Success = true
 
+		if args.LeaderCommit > rf.commitIndex {
+			prevCommitIndex := rf.commitIndex
+			rf.commitIndex = min(args.LeaderCommit, len(rf.log)-1)
+			if rf.commitIndex > prevCommitIndex {
+				for i := prevCommitIndex + 1; i <= rf.commitIndex; i++ {
+					msg := ApplyMsg{
+						CommandValid: true,
+						CommandIndex: rf.log[i].Index,
+						Command:      rf.log[i].Command,
+					}
+					DPrintf("[%d] commit index:[%d]\n", rf.me, i)
+					rf.applyCh <- msg
+				}
+			}
+		}
+
 	} else {
 		DPrintf("[%d] reject [%d]'s append-[%+v]\n", rf.me, args.LeaderId, args)
 		reply.Success = false
-	}
-
-	if args.LeaderCommit > rf.commitIndex {
-		prevCommitIndex := rf.commitIndex
-		rf.commitIndex = min(args.LeaderCommit, len(rf.log)-1)
-		if rf.commitIndex > prevCommitIndex {
-			for i := prevCommitIndex + 1; i <= rf.commitIndex; i++ {
-				msg := ApplyMsg{
-					CommandValid: true,
-					CommandIndex: rf.log[i].Index,
-					Command:      rf.log[i].Command,
-				}
-				DPrintf("[%d] commit index:[%d]\n", rf.me, i)
-				rf.applyCh <- msg
-			}
-		}
+		rf.transitionToFollower()
 	}
 
 	if args.Term > rf.currentTerm {
