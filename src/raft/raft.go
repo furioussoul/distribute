@@ -127,6 +127,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		}
 
 		index, term = rf.appendLogToLocal(entry)
+		rf.persist()
 	}
 
 	return index, term, isLeader
@@ -306,6 +307,8 @@ func (rf *Raft) transitionToLeader() {
 }
 
 func (rf *Raft) transitionToCandidate() {
+	rf.lock.Lock()
+	defer rf.lock.Unlock()
 	if rf.ticker != nil {
 		rf.ticker.Stop()
 	}
@@ -313,6 +316,8 @@ func (rf *Raft) transitionToCandidate() {
 	rf.updateTime = time.Now()
 	DPrintf("[%v]-[%d] transitionToCandidate update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, rf.currentTerm+1)
 	rf.currentTerm += 1
+	rf.votedFor = rf.me
+	rf.persist()
 	go rf.timeout(rf.candidateHb)
 }
 

@@ -88,7 +88,6 @@ func (rf *Raft) sendAppendEntries(server int, args *RequestAppendEntries, reply 
 }
 
 func (rf *Raft) vote() {
-	rf.votedFor = rf.me
 	DPrintf("[%d] election start[role:%d][term:%d][votefor:%d]\n", rf.me, rf.role, rf.currentTerm, rf.votedFor)
 	peers := rf.peers
 	quorum := 1
@@ -110,6 +109,9 @@ func (rf *Raft) vote() {
 
 			ok := rf.sendRequestVote(j, &args, &reply)
 
+			rf.lock.Lock()
+			defer rf.lock.Unlock()
+
 			//DPrintf("[%d] sent vote to [%d] reply-[Term:%d][VoteGranted:%v]\n", rf.me, j, reply.Term, reply.VoteGranted)
 			voteCount += 1
 
@@ -120,6 +122,7 @@ func (rf *Raft) vote() {
 				rf.updateTime = time.Now()
 				DPrintf("[%v]-[%d] vote update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
 				rf.currentTerm = reply.Term
+				rf.persist()
 			}
 
 			if quorum == len(rf.peers)/2+1 {
@@ -131,6 +134,7 @@ func (rf *Raft) vote() {
 				//election complete voteCount be equals to peers count -1
 				DPrintf("[%d] election #lose [term:%d]\n", rf.me, rf.currentTerm)
 				rf.votedFor = -1
+				rf.persist()
 				rf.leaderId = -1
 				go rf.timeout(rf.candidateHb)
 			}
@@ -174,6 +178,7 @@ func (rf *Raft) appendEmpty(i int) {
 			DPrintf("[%v]-[%d] appendEmpty update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
 			rf.currentTerm = reply.Term
 			rf.transitionToFollower()
+			rf.persist()
 			rf.lock.Unlock()
 		}
 	}(i)
@@ -278,12 +283,14 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 		DPrintf("[%d] grant [%d] [currentTerm:%d][requestTerm:%d]\n", rf.me, args.CandidateId, rf.currentTerm, args.Term)
 		rf.votedFor = args.CandidateId
+		rf.persist()
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = true
 	}
 
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
+		rf.persist()
 		rf.transitionToFollower()
 	}
 }
@@ -302,6 +309,7 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 	if len(args.Entries) == 0 || rf.logMatch(args.Entries, args.PrevLogTerm, args.PrevLogIndex) {
 		if args.Term > rf.currentTerm {
 			rf.currentTerm = args.Term
+			rf.persist()
 		}
 		if rf.leaderId != args.LeaderId {
 			rf.leaderId = args.LeaderId
@@ -315,6 +323,7 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 		if len(args.Entries) > 0 {
 			DPrintf("[%d] accept [%d]'s append-[%+v]\n", rf.me, args.LeaderId, args)
 			rf.appendLogToLocal(args.Entries[0])
+			rf.persist()
 		}
 
 		rf.transitionToFollower()
@@ -345,6 +354,7 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
+		rf.persist()
 		rf.transitionToFollower()
 	}
 }
