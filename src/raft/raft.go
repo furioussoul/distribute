@@ -216,14 +216,6 @@ func (rf *Raft) heartbeat(cb func()) {
 	}
 }
 
-func (rf *Raft) followerHb() {
-	rf.transitionToCandidate()
-}
-
-func (rf *Raft) candidateHb() {
-	rf.vote()
-}
-
 func (rf *Raft) leaderHb() {
 
 	for i := range rf.peers {
@@ -291,6 +283,7 @@ func (rf *Raft) resetCommitIndex() {
 }
 
 func (rf *Raft) transitionToLeader() {
+
 	DPrintf("[%d] election #win transition to leader [term:%d]\n", rf.me, rf.currentTerm)
 
 	if rf.ticker != nil {
@@ -318,10 +311,11 @@ func (rf *Raft) transitionToCandidate() {
 	rf.currentTerm += 1
 	rf.votedFor = rf.me
 	rf.persist()
-	go rf.timeout(rf.candidateHb)
+	go rf.timeout(rf.vote)
 }
 
 func (rf *Raft) transitionToFollower() {
+
 	if rf.role != 1 {
 		rf.role = 1
 		DPrintf("[%d] transition to follower [term:%d]\n", rf.me, rf.currentTerm)
@@ -329,7 +323,7 @@ func (rf *Raft) transitionToFollower() {
 	if rf.ticker != nil {
 		rf.ticker.Stop()
 	}
-	go rf.timeout(rf.followerHb)
+	go rf.timeout(rf.transitionToCandidate)
 }
 
 func (rf *Raft) calElectionTimeout() int64 {
@@ -337,7 +331,7 @@ func (rf *Raft) calElectionTimeout() int64 {
 	return n
 }
 
-func (rf *Raft) logMatch(logEntries []LogEntry, prevTerm int, prevIndex int) bool {
+func (rf *Raft) logMatch(prevTerm int, prevIndex int) bool {
 
 	flag := true
 

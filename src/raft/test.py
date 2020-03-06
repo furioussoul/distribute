@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 import json
 import os
 
@@ -36,11 +38,10 @@ def deal_line(line):
     }]))
 
 
-img_dir = "/Users/szj/Downloads/关键点数据"
-data_path = "/Users/szj/Downloads/train/data_info.json"
+
 
 def deal_data(context):
-    file = open(data_path)
+    file = open(context['data_path'])
     for line in file:
         deal_line2(context,line)
 
@@ -52,11 +53,11 @@ def deal_line2(context,line):
     context[image_name]['label'] = item
 
 def deal_images(context):
-    dirs = os.listdir(img_dir)
+    dirs = os.listdir(context['img_dir'])
     for file in dirs:
         if ".png" not in file :
             continue
-        img = Image.open(img_dir + "/" + file)
+        img = Image.open(context['img_dir'] + "/" + file)
         if file not in context:
             context[file] = {}
         context[file]['width'] = img.width
@@ -76,22 +77,63 @@ def convert_to_label_result(context):
                 xy = {}
                 xy['axisX'] = str(float(float(coordinates[i])*val['width']))
             else:
-                xy['axisY'] = str(float(float(coordinates[i])*val['height']))
+                xy['axisY'] = str(float(float(coordinates[i]) * val['height']))
                 list.append(xy)
 
-        label_file_path = (img_dir+"/"+key ).replace("png","txt")
+        label_file_path = (context['img_dir'] + "/" + key).replace("png", "txt")
 
         label_file = open(label_file_path, 'w')
         label_file.writelines(json.dumps([{
             "coordinates": list
         }]))
 
-context = {}
-deal_images(context)
-deal_data(context)
-convert_to_label_result(context)
+
+def convertKeyPoint():
+    img_dir = "/Users/szj/Downloads/关键点数据"
+    data_path = "/Users/szj/Downloads/train/data_info.json"
+    context = {}
+    context['img_dir'] = img_dir
+    context['data_path'] = data_path
+    deal_images(context)
+    deal_data(context)
+    convert_to_label_result(context)
 
 
+def convertCifar10():
+    img_dir = "/Users/szj/Downloads/class"
+    data_path = "/Users/szj/Downloads/train.txt"
+    context = {}
+    context['img_dir'] = img_dir
+    context['data_path'] = data_path
+    deal_cifar10_img(context)
+    file = open(context['data_path'])
+    for line in file:
+        deal_cifar10_data(context, line)
+
+
+def deal_cifar10_img(context):
+    dirs = os.listdir(context['img_dir'])
+    for file in dirs:
+        if file not in context:
+            context[file] = {}
+
+
+def deal_cifar10_data(context, line):
+    item = line.split(" ")
+    image_path = item[0]
+    im_split = image_path.split("/")
+    image_name = im_split[len(im_split) - 1]
+    if image_name in context:
+        label = int(item[3].replace("\n", ""))
+        label_file_path = (context['img_dir'] + "/" + image_name).replace("jpg", "txt")
+        label_file = open(label_file_path, 'w')
+        label_file.writelines(json.dumps([{
+            "classification": {"种类" :label}
+        }],ensure_ascii=False))
+        print(label)
+
+
+convertCifar10()
 # file = open(path)
 #
 # for line in file:
