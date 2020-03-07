@@ -232,6 +232,7 @@ func (rf *Raft) leaderHb() {
 	rf.resetCommitIndex()
 }
 
+//只commit当前term的日志,figure8描述了之前term的on major的log也会被覆盖
 func (rf *Raft) resetCommitIndex() {
 
 	ids := make([]int, 0)
@@ -268,17 +269,22 @@ func (rf *Raft) resetCommitIndex() {
 	}
 
 	//DPrintf("[%d],agreeIndex:[%d],commitIndex:[%d]", rf.me, agreeIndex, rf.commitIndex)
-	if agreeIndex > rf.commitIndex {
-		DPrintf("[%d] commit index:[%d] ids:[%+v]\n", rf.me, agreeIndex, ids)
+	if rf.log[agreeIndex].Term == rf.currentTerm && agreeIndex > rf.commitIndex {
+		DPrintf("[%d] commit index:[%d] matchIndex:[%+v]\n", rf.me, agreeIndex, rf.matchIndex)
+
+		if agreeIndex > rf.commitIndex {
+			for i := rf.commitIndex; i <= agreeIndex; i++ {
+				entry := rf.log[i]
+				msg := ApplyMsg{
+					CommandValid: true,
+					CommandIndex: entry.Index,
+					Command:      entry.Command,
+				}
+				rf.applyCh <- msg
+			}
+		}
 
 		rf.commitIndex = agreeIndex
-		entry := rf.log[agreeIndex]
-		msg := ApplyMsg{
-			CommandValid: true,
-			CommandIndex: entry.Index,
-			Command:      entry.Command,
-		}
-		rf.applyCh <- msg
 	}
 }
 
@@ -308,8 +314,11 @@ func (rf *Raft) transitionToCandidate() {
 	rf.role = 2
 	rf.updateTime = time.Now()
 	DPrintf("[%v]-[%d] transitionToCandidate update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, rf.currentTerm+1)
+
+	//atomic
 	rf.currentTerm += 1
 	rf.votedFor = rf.me
+
 	rf.persist()
 	go rf.timeout(rf.vote)
 }

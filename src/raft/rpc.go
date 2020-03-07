@@ -124,7 +124,6 @@ func (rf *Raft) vote() {
 				DPrintf("[%v]-[%d] vote update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
 				rf.currentTerm = reply.Term
 				rf.transitionToFollower()
-				rf.persist()
 			}
 
 			if quorum == len(rf.peers)/2+1 {
@@ -136,10 +135,11 @@ func (rf *Raft) vote() {
 				//election complete voteCount be equals to peers count -1
 				DPrintf("[%d] election #lose [term:%d]\n", rf.me, rf.currentTerm)
 				rf.votedFor = -1
-				rf.persist()
 				rf.leaderId = -1
 				go rf.timeout(rf.vote)
 			}
+
+			rf.persist()
 		}(i)
 	}
 }
@@ -186,8 +186,8 @@ func (rf *Raft) appendEmpty(i int) {
 			DPrintf("[%v]-[%d] appendEmpty update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
 			rf.currentTerm = reply.Term
 			rf.transitionToFollower()
-			rf.persist()
 		}
+		rf.persist()
 	}(i)
 }
 
@@ -262,7 +262,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && rf.logNewer(args) {
 
 		rf.votedFor = args.CandidateId
-		rf.persist()
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = true
 	}
@@ -270,9 +269,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if args.Term > rf.currentTerm {
 
 		rf.currentTerm = args.Term
-		rf.persist()
 		rf.transitionToFollower()
 	}
+
+	rf.persist()
 }
 
 func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntries) {
@@ -289,7 +289,6 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 	if len(args.Entries) == 0 || rf.logMatch(args.PrevLogTerm, args.PrevLogIndex) {
 		if args.Term > rf.currentTerm {
 			rf.currentTerm = args.Term
-			rf.persist()
 		}
 		if rf.leaderId != args.LeaderId {
 			rf.leaderId = args.LeaderId
@@ -302,10 +301,9 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 
 		if len(args.Entries) > 0 {
 			rf.appendLogToLocal(args.Entries[0])
-			rf.persist()
 		}
 
-		DPrintf("[%d]-[%+v]-[%+v]", rf.me, args, rf.log)
+		//DPrintf("[%d]-[%+v]-[%+v]", rf.me, args, rf.log)
 
 		rf.transitionToFollower()
 		reply.Term = rf.currentTerm
@@ -334,9 +332,10 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
-		rf.persist()
 		rf.transitionToFollower()
 	}
+
+	rf.persist()
 }
 
 func (rf *Raft) logNewer(args *RequestVoteArgs) bool {

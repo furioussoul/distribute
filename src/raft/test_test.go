@@ -748,6 +748,10 @@ func TestPersist32C(t *testing.T) {
 //
 func TestFigure82C(t *testing.T) {
 	servers := 5
+	ids := []int{}
+	for i := 0; i < servers; i++ {
+		ids = append(ids, i)
+	}
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
 
@@ -776,7 +780,6 @@ func TestFigure82C(t *testing.T) {
 		}
 
 		if leader != -1 {
-			DPrintf("kill-[%d]", leader)
 			cfg.crash1(leader)
 			nup -= 1
 		}
