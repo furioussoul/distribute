@@ -136,7 +136,13 @@ func (rf *Raft) vote() {
 				DPrintf("[%d] election #lose [term:%d]\n", rf.me, rf.currentTerm)
 				rf.votedFor = -1
 				rf.leaderId = -1
-				go rf.timeout(rf.vote)
+				go rf.timeout(func() {
+					rf.lock.Lock()
+					rf.currentTerm++
+					rf.votedFor = rf.me
+					rf.lock.Unlock()
+					rf.vote()
+				})
 			}
 
 			rf.persist()
@@ -300,6 +306,7 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 		}
 
 		if len(args.Entries) > 0 {
+			DPrintf("[%d] prevIndex:[%d] prevTerm:[%d]", rf.me, args.PrevLogIndex, args.PrevLogTerm)
 			rf.appendLogToLocal(args.Entries[0])
 		}
 
