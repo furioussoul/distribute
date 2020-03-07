@@ -116,14 +116,17 @@ func (rf *Raft) vote() {
 			//DPrintf("[%d] sent vote to [%d] reply-[Term:%d][VoteGranted:%v]\n", rf.me, j, reply.Term, reply.VoteGranted)
 			voteCount += 1
 
-			if ok && reply.VoteGranted {
-				quorum += 1
-			} else if reply.Term > rf.currentTerm {
+			if reply.Term > rf.currentTerm {
 				rf.role = 1
 				rf.updateTime = time.Now()
 				DPrintf("[%v]-[%d] vote update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
 				rf.currentTerm = reply.Term
-				rf.transitionToFollower()
+				rf.persist()
+				return
+			}
+
+			if ok && reply.VoteGranted {
+				quorum += 1
 			}
 
 			if quorum == len(rf.peers)/2+1 {
@@ -164,6 +167,8 @@ func (rf *Raft) appendLogToLocal(entry LogEntry) (index int, term int) {
 	DPrintf("[%d]-appendLogToLocal-[%+v]\n[%+v]\n", rf.me, entry, rf.log)
 	index = entry.Index
 	term = entry.Term
+
+	rf.persist()
 	return
 }
 
@@ -191,9 +196,9 @@ func (rf *Raft) appendEmpty(i int) {
 			rf.updateTime = time.Now()
 			DPrintf("[%v]-[%d] appendEmpty update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
 			rf.currentTerm = reply.Term
+			rf.persist()
 			rf.transitionToFollower()
 		}
-		rf.persist()
 	}(i)
 }
 
@@ -234,19 +239,21 @@ func (rf *Raft) appendToMembers(i int) {
 		}
 
 		if reply.Term > rf.currentTerm {
-			rf.role = 1
 			rf.updateTime = time.Now()
 			DPrintf("[%v]-[%d] appendToMembers update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
 			rf.currentTerm = reply.Term
+			rf.persist()
 			rf.transitionToFollower()
-		} else {
-			if reply.Success {
-				rf.matchIndex[j] = logIndex
-				rf.nextIndex[j]++
-			} else {
-				rf.nextIndex[j]--
-			}
+			return
 		}
+
+		if reply.Success {
+			rf.matchIndex[j] = logIndex
+			rf.nextIndex[j]++
+		} else {
+			rf.nextIndex[j]--
+		}
+
 	}(i)
 }
 
