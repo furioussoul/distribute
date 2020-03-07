@@ -776,6 +776,7 @@ func TestFigure82C(t *testing.T) {
 		}
 
 		if leader != -1 {
+			DPrintf("kill-[%d]", leader)
 			cfg.crash1(leader)
 			nup -= 1
 		}
@@ -783,6 +784,7 @@ func TestFigure82C(t *testing.T) {
 		if nup < 3 {
 			s := rand.Int() % servers
 			if cfg.rafts[s] == nil {
+				DPrintf("start-[%d]", s)
 				cfg.start1(s)
 				cfg.connect(s)
 				nup += 1
@@ -792,6 +794,7 @@ func TestFigure82C(t *testing.T) {
 
 	for i := 0; i < servers; i++ {
 		if cfg.rafts[i] == nil {
+			DPrintf("start-[%d]", i)
 			cfg.start1(i)
 			cfg.connect(i)
 		}

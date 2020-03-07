@@ -267,7 +267,7 @@ func (rf *Raft) resetCommitIndex() {
 		}
 	}
 
-	DPrintf("[%d],agreeIndex:[%d],commitIndex:[%d]", rf.me, agreeIndex, rf.commitIndex)
+	//DPrintf("[%d],agreeIndex:[%d],commitIndex:[%d]", rf.me, agreeIndex, rf.commitIndex)
 	if agreeIndex > rf.commitIndex {
 		DPrintf("[%d] commit index:[%d] ids:[%+v]\n", rf.me, agreeIndex, ids)
 

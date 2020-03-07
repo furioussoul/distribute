@@ -88,6 +88,7 @@ func (rf *Raft) sendAppendEntries(server int, args *RequestAppendEntries, reply 
 }
 
 func (rf *Raft) vote() {
+
 	DPrintf("[%d] election start[role:%d][term:%d][votefor:%d]\n", rf.me, rf.role, rf.currentTerm, rf.votedFor)
 	peers := rf.peers
 	quorum := 1
@@ -144,8 +145,13 @@ func (rf *Raft) vote() {
 }
 
 func (rf *Raft) appendLogToLocal(entry LogEntry) (index int, term int) {
-	if entry.Index <= len(rf.log)-1 && rf.log[entry.Index].Term != entry.Term {
-		rf.log = rf.log[:entry.Index]
+	if entry.Index <= len(rf.log)-1 {
+		if rf.log[entry.Index].Term != entry.Term {
+			rf.log = rf.log[:entry.Index]
+		} else {
+			DPrintf("[%d] ignore logEntry already in the log", rf.me)
+			return
+		}
 	}
 
 	rf.log = append(rf.log, entry)
@@ -191,18 +197,10 @@ func (rf *Raft) appendToMembers(i int) {
 		rf.lock.Lock()
 		prevIndex := rf.nextIndex[j] - 1
 		logIndex := rf.nextIndex[j]
-		if rf.nextIndex[i] >= len(rf.log) {
-			prevIndex--
-			logIndex--
-		}
 
-		for {
-			if logIndex >= len(rf.log) {
-				logIndex--
-				prevIndex--
-			} else {
-				break
-			}
+		if logIndex >= len(rf.log) {
+			logIndex--
+			prevIndex--
 		}
 
 		prev := rf.log[prevIndex]
@@ -306,6 +304,8 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 			rf.appendLogToLocal(args.Entries[0])
 			rf.persist()
 		}
+
+		DPrintf("[%d]-[%+v]-[%+v]", rf.me, args, rf.log)
 
 		rf.transitionToFollower()
 		reply.Term = rf.currentTerm
