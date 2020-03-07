@@ -82,7 +82,6 @@ type Raft struct {
 	matchIndex  []int
 	updateTime  time.Time
 	applyCh     chan ApplyMsg
-	sessions    map[interface{}]bool
 }
 
 type LogEntry struct {
@@ -176,17 +175,17 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.role = 1
 	rf.heartBeatInterval = 40 * time.Millisecond
 	rf.electionTimeout = 200 * time.Millisecond
-	rf.votedFor = -1
 	rf.leaderId = -1
 	rf.updateTime = time.Now()
-	rf.log = []LogEntry{{0, 0, nil}}
 	rf.commitIndex = 0
 	rf.lastApplied = 0
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
+	rf.currentTerm = 0
+	rf.votedFor = -1
+	rf.log = []LogEntry{{0, 0, nil}}
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
-	rf.sessions = make(map[interface{}]bool)
 	rf.transitionToFollower()
 
 	DPrintf("[node:%d][role:%d][term:%d]start\n", rf.me, rf.role, rf.currentTerm)

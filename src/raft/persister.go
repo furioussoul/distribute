@@ -91,6 +91,7 @@ func (rf *Raft) GetState() (int, bool) {
 // see paper's Figure 2 for a description of what should be persistent.
 //
 func (rf *Raft) persist() {
+
 	// Your code here (2C).
 	// Example:
 	w := new(bytes.Buffer)
