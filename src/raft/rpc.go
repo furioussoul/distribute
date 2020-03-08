@@ -137,6 +137,7 @@ func (rf *Raft) vote() {
 			} else if voteCount == len(peers)-1 && rf.role == 2 {
 				//election complete voteCount be equals to peers count -1
 				DPrintf("[%d] election #lose [term:%d]\n", rf.me, rf.currentTerm)
+				//todo #bug fix two leader in one term
 				rf.votedFor = -1
 				rf.leaderId = -1
 				go rf.timeout(func() {
