@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"sync/atomic"
 	"time"
 )
 
@@ -89,15 +90,40 @@ func (rf *Raft) sendAppendEntries(server int, args *RequestAppendEntries, reply 
 
 func (rf *Raft) vote() {
 
-	DPrintf("[%d] election start[role:%d][term:%d][votefor:%d]\n", rf.me, rf.role, rf.currentTerm, rf.votedFor)
-	peers := rf.peers
-	quorum := 1
-	voteCount := 0
+	DPrintf("[%d] start vote term[%d]", rf.me, rf.currentTerm)
 
-	for i := range peers {
+	rf.setTerm(rf.currentTerm + 1)
+	rf.setLastVoteFor(rf.me)
+
+	var cancelQuorum int32
+
+	quorum := makeQuorum(len(rf.peers)/2+1, func(elected bool) {
+
+		if !atomic.CompareAndSwapInt32(&cancelQuorum, 0, 1) {
+			return
+		}
+
+		if elected {
+			rf.transitionToLeader()
+		} else {
+			rf.transitionToFollower()
+		}
+	})
+
+	go rf.timeout(func() {
+		if !atomic.CompareAndSwapInt32(&cancelQuorum, 0, 1) {
+			return
+		}
+		DPrintf("[%d] vote timeout restart vote", rf.me)
+		rf.vote()
+	})
+
+	for i := range rf.peers {
+
 		if i == rf.me {
 			continue
 		}
+
 		go func(j int) {
 
 			args := RequestVoteArgs{
@@ -110,46 +136,24 @@ func (rf *Raft) vote() {
 
 			ok := rf.sendRequestVote(j, &args, &reply)
 
-			rf.lock.Lock()
-			defer rf.lock.Unlock()
-
-			//DPrintf("[%d] sent vote to [%d] reply-[Term:%d][VoteGranted:%v]\n", rf.me, j, reply.Term, reply.VoteGranted)
-			voteCount += 1
-
-			if reply.Term > rf.currentTerm {
-				rf.role = 1
-				rf.updateTime = time.Now()
-				DPrintf("[%v]-[%d] vote update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
-				rf.currentTerm = reply.Term
-				rf.persist()
-				return
+			if !ok {
+				DPrintf("vote err")
+				quorum.fail()
+			} else if reply.Term > rf.currentTerm {
+				DPrintf("Received greater term from [%d]", j)
+				atomic.CompareAndSwapInt32(&cancelQuorum, 0, 1)
+				rf.setTerm(reply.Term)
+				rf.transitionToFollower()
+			} else if !reply.VoteGranted {
+				DPrintf("[%d] vote fail1 from [%d]", rf.me, j)
+				quorum.fail()
+			} else if rf.currentTerm != reply.Term {
+				DPrintf("[%d] vote fail2 from [%d]", rf.me, j)
+				quorum.fail()
+			} else {
+				DPrintf("[%d] vote succeed from [%d]", rf.me, j)
+				quorum.succeed()
 			}
-
-			if ok && reply.VoteGranted {
-				quorum += 1
-			}
-
-			if quorum == len(rf.peers)/2+1 {
-				if rf.role != 3 {
-					rf.transitionToLeader()
-				}
-
-			} else if voteCount == len(peers)-1 && rf.role == 2 {
-				//election complete voteCount be equals to peers count -1
-				DPrintf("[%d] election #lose [term:%d]\n", rf.me, rf.currentTerm)
-				//todo #bug fix two leader in one term
-				rf.votedFor = -1
-				rf.leaderId = -1
-				go rf.timeout(func() {
-					rf.lock.Lock()
-					rf.currentTerm++
-					rf.votedFor = rf.me
-					rf.lock.Unlock()
-					rf.vote()
-				})
-			}
-
-			rf.persist()
 		}(i)
 	}
 }
@@ -185,19 +189,13 @@ func (rf *Raft) appendEmpty(i int) {
 
 		ok := rf.sendAppendEntries(j, &request, &reply)
 
-		rf.lock.Lock()
-		defer rf.lock.Unlock()
-
 		if !ok {
 			return
 		}
 
 		if reply.Term > rf.currentTerm {
-			rf.role = 1
-			rf.updateTime = time.Now()
 			DPrintf("[%v]-[%d] appendEmpty update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
-			rf.currentTerm = reply.Term
-			rf.persist()
+			rf.setTerm(reply.Term)
 			rf.transitionToFollower()
 		}
 	}(i)
@@ -206,7 +204,6 @@ func (rf *Raft) appendEmpty(i int) {
 func (rf *Raft) appendToMembers(i int) {
 
 	go func(j int) {
-		rf.lock.Lock()
 		prevIndex := rf.nextIndex[j] - 1
 		logIndex := rf.nextIndex[j]
 
@@ -228,12 +225,7 @@ func (rf *Raft) appendToMembers(i int) {
 			LeaderCommit: rf.commitIndex,
 		}
 
-		rf.lock.Unlock()
-
 		ok := rf.sendAppendEntries(j, &request, &reply)
-
-		rf.lock.Lock()
-		defer rf.lock.Unlock()
 
 		if !ok {
 			return
@@ -242,8 +234,7 @@ func (rf *Raft) appendToMembers(i int) {
 		if reply.Term > rf.currentTerm {
 			rf.updateTime = time.Now()
 			DPrintf("[%v]-[%d] appendToMembers update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
-			rf.currentTerm = reply.Term
-			rf.persist()
+			rf.setTerm(reply.Term)
 			rf.transitionToFollower()
 			return
 		}
@@ -259,40 +250,30 @@ func (rf *Raft) appendToMembers(i int) {
 }
 
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
-	//DPrintf("[%d] voting for [%d] [currentTerm:%d][requestTerm:%d]\n", rf.me, args.CandidateId, rf.currentTerm, args.Term)
 
-	//two nodes vote at the same time may cause this raft node vote for two member ,so we have to lock
-	rf.lock.Lock()
-	defer rf.lock.Unlock()
+	DPrintf("[%d] accept RequestVote from [%d] , args:[%+v]", rf.me, args.CandidateId, args)
 
-	if args.Term < rf.currentTerm {
+	if args.Term > rf.currentTerm {
 
-		reply.Term = rf.currentTerm
-		reply.VoteGranted = false
-		DPrintf("[%d] reject [%d] [currentTerm:%d][requestTerm:%d]\n", rf.me, args.CandidateId, rf.currentTerm, args.Term)
-		return
+		rf.setTerm(args.Term)
+		rf.transitionToFollower()
+
 	}
 
 	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && rf.logNewer(args) {
 
-		rf.votedFor = args.CandidateId
+		rf.setLastVoteFor(args.CandidateId)
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = true
+
+	} else {
+		reply.Term = rf.currentTerm
+		reply.VoteGranted = false
+
 	}
-
-	if args.Term > rf.currentTerm {
-
-		rf.currentTerm = args.Term
-		rf.transitionToFollower()
-	}
-
-	rf.persist()
 }
 
 func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntries) {
-
-	rf.lock.Lock()
-	defer rf.lock.Unlock()
 
 	if args.Term < rf.currentTerm {
 		reply.Success = false
@@ -302,7 +283,7 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 	}
 	if len(args.Entries) == 0 || rf.logMatch(args.PrevLogTerm, args.PrevLogIndex) {
 		if args.Term > rf.currentTerm {
-			rf.currentTerm = args.Term
+			rf.setTerm(args.Term)
 		}
 		if rf.leaderId != args.LeaderId {
 			rf.leaderId = args.LeaderId
@@ -346,11 +327,9 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 	}
 
 	if args.Term > rf.currentTerm {
-		rf.currentTerm = args.Term
+		rf.setTerm(args.Term)
 		rf.transitionToFollower()
 	}
-
-	rf.persist()
 }
 
 func (rf *Raft) logNewer(args *RequestVoteArgs) bool {

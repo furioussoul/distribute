@@ -126,7 +126,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		}
 
 		index, term = rf.appendLogToLocal(entry)
-		rf.persist()
 	}
 
 	return index, term, isLeader
@@ -172,7 +171,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.persister = persister
 	rf.me = me
 	rf.applyCh = applyCh
-	rf.role = 1
 	rf.heartBeatInterval = 40 * time.Millisecond
 	rf.electionTimeout = 200 * time.Millisecond
 	rf.leaderId = -1
@@ -289,11 +287,16 @@ func (rf *Raft) resetCommitIndex() {
 
 func (rf *Raft) transitionToLeader() {
 
-	DPrintf("[%d] election #win transition to leader [term:%d]\n", rf.me, rf.currentTerm)
+	if rf.role == 3 {
+		return
+	}
 
 	if rf.ticker != nil {
 		rf.ticker.Stop()
 	}
+
+	DPrintf("[%d] election #win transition to leader [term:%d]\n", rf.me, rf.currentTerm)
+
 	rf.role = 3
 	rf.leaderId = rf.me
 	l := len(rf.nextIndex)
@@ -305,32 +308,34 @@ func (rf *Raft) transitionToLeader() {
 }
 
 func (rf *Raft) transitionToCandidate() {
-	rf.lock.Lock()
-	defer rf.lock.Unlock()
+
+	if rf.role == 2 {
+		return
+	}
+
 	if rf.ticker != nil {
 		rf.ticker.Stop()
 	}
+
 	rf.role = 2
-	rf.updateTime = time.Now()
 	DPrintf("[%v]-[%d] transitionToCandidate update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, rf.currentTerm+1)
 
-	//atomic
-	rf.currentTerm += 1
-	rf.votedFor = rf.me
-
-	rf.persist()
 	go rf.timeout(rf.vote)
 }
 
 func (rf *Raft) transitionToFollower() {
 
-	if rf.role != 1 {
-		rf.role = 1
-		DPrintf("[%d] transition to follower [term:%d]\n", rf.me, rf.currentTerm)
+	if rf.role == 1 {
+		return
 	}
+
 	if rf.ticker != nil {
 		rf.ticker.Stop()
 	}
+
+	rf.role = 1
+	DPrintf("[%d] transition to follower [term:%d]\n", rf.me, rf.currentTerm)
+
 	go rf.timeout(rf.transitionToCandidate)
 }
 
@@ -356,4 +361,31 @@ func (rf *Raft) logMatch(prevTerm int, prevIndex int) bool {
 		//DPrintf("[%d] log mismatch, prevIndex:[%d],prevTerm:[%d],requestEntry:[%+v],myLog:[%+v]", rf.me, prevIndex, prevTerm, logEntries[0], rf.log)
 	}
 	return flag
+}
+
+func (rf *Raft) setLastVoteFor(candidate int) {
+
+	if rf.votedFor != -1 && candidate != -1 {
+		DPrintf("[%d] Already voted for another candidate", rf.me)
+		return
+	}
+
+	rf.votedFor = candidate
+	rf.persist()
+
+	if candidate != -1 {
+		DPrintf("[%d] vote for [%d]", rf.me, candidate)
+	} else {
+		DPrintf("[%d] reset lastVoteFor = -1", rf.me)
+	}
+}
+
+func (rf *Raft) setTerm(term int) {
+	if term > rf.currentTerm {
+		rf.currentTerm = term
+		rf.leaderId = -1
+		rf.votedFor = -1
+		rf.persist()
+		DPrintf("[%d] Set term [%d]", rf.me, term)
+	}
 }
