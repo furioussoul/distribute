@@ -18,6 +18,8 @@ package raft
 //
 
 import (
+	"errors"
+	"fmt"
 	"math/rand"
 	"sort"
 	"sync"
@@ -78,10 +80,11 @@ type Raft struct {
 	log         []LogEntry
 	commitIndex int
 	lastApplied int
-	nextIndex   []int
-	matchIndex  []int
-	updateTime  time.Time
-	applyCh     chan ApplyMsg
+
+	memberAppending []int32
+	nextIndex       []int
+	matchIndex      []int
+	applyCh         chan ApplyMsg
 }
 
 type LogEntry struct {
@@ -105,19 +108,16 @@ type LogEntry struct {
 // the leader.
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
+
 	rf.lock.Lock()
 	defer rf.lock.Unlock()
+
 	index := -1
 	term := -1
 	isLeader := rf.me == rf.leaderId
 
 	// Your code here (2B).
 	if isLeader {
-		//if !rf.sessions[command] {
-		//	rf.sessions[command] = true
-		//} else {
-		//	return -1, -1, false
-		//}
 
 		entry := LogEntry{
 			Term:    rf.currentTerm,
@@ -174,11 +174,14 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.heartBeatInterval = 40 * time.Millisecond
 	rf.electionTimeout = 200 * time.Millisecond
 	rf.leaderId = -1
-	rf.updateTime = time.Now()
 	rf.commitIndex = 0
 	rf.lastApplied = 0
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
+	rf.memberAppending = make([]int32, len(peers))
+	for i := range peers {
+		rf.memberAppending[i] = 0
+	}
 	rf.currentTerm = 0
 	rf.votedFor = -1
 	rf.log = []LogEntry{{0, 0, nil}}
@@ -214,18 +217,7 @@ func (rf *Raft) heartbeat(cb func()) {
 }
 
 func (rf *Raft) leaderHb() {
-
-	for i := range rf.peers {
-		if i == rf.me {
-			continue
-		}
-		if rf.matchIndex[i] == len(rf.log)-1 {
-			rf.appendEmpty(i)
-		} else {
-			rf.appendToMembers(i)
-		}
-	}
-
+	rf.appendToMembers()
 	rf.resetCommitIndex()
 }
 
@@ -318,7 +310,7 @@ func (rf *Raft) transitionToCandidate() {
 	}
 
 	rf.role = 2
-	DPrintf("[%v]-[%d] transitionToCandidate update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, rf.currentTerm+1)
+	DPrintf("[%v] transitionToCandidate update term from [%d] to [%d]\n", rf.me, rf.currentTerm, rf.currentTerm+1)
 
 	go rf.timeout(rf.vote)
 }
@@ -363,11 +355,25 @@ func (rf *Raft) logMatch(prevTerm int, prevIndex int) bool {
 	return flag
 }
 
-func (rf *Raft) setLastVoteFor(candidate int) {
+func (rf *Raft) setTerm(term int) {
+	if term > rf.currentTerm {
+		rf.currentTerm = term
+		rf.leaderId = -1
+		rf.votedFor = -1
+		rf.persist()
+		DPrintf("[%d] Set term [%d]", rf.me, term)
+	}
+}
+
+func (rf *Raft) setLastVoteFor(candidate int) error {
+
+	rf.lock.Lock()
+	defer rf.lock.Unlock()
 
 	if rf.votedFor != -1 && candidate != -1 {
-		DPrintf("[%d] Already voted for another candidate", rf.me)
-		return
+		errMsg := fmt.Sprintf("[%d] Already voted for another candidate", rf.me)
+		DPrintf(errMsg)
+		return errors.New(errMsg)
 	}
 
 	rf.votedFor = candidate
@@ -378,14 +384,29 @@ func (rf *Raft) setLastVoteFor(candidate int) {
 	} else {
 		DPrintf("[%d] reset lastVoteFor = -1", rf.me)
 	}
+
+	return nil
 }
 
-func (rf *Raft) setTerm(term int) {
-	if term > rf.currentTerm {
-		rf.currentTerm = term
-		rf.leaderId = -1
-		rf.votedFor = -1
-		rf.persist()
-		DPrintf("[%d] Set term [%d]", rf.me, term)
+func (rf *Raft) appendLogToLocal(entry LogEntry) (index int, term int) {
+
+	rf.appenderLock.Lock()
+	defer rf.appenderLock.Unlock()
+
+	if entry.Index <= len(rf.log)-1 {
+		if rf.log[entry.Index].Term != entry.Term {
+			rf.log = rf.log[:entry.Index]
+		} else {
+			DPrintf("[%d] ignore logEntry already in the log", rf.me)
+			return
+		}
 	}
+
+	rf.log = append(rf.log, entry)
+	DPrintf("[%d]-appendLogToLocal-[%+v]\n[%+v]\n", rf.me, entry, rf.log)
+	index = entry.Index
+	term = entry.Term
+
+	rf.persist()
+	return
 }

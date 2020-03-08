@@ -93,7 +93,9 @@ func (rf *Raft) vote() {
 	DPrintf("[%d] start vote term[%d]", rf.me, rf.currentTerm)
 
 	rf.setTerm(rf.currentTerm + 1)
-	rf.setLastVoteFor(rf.me)
+	if err := rf.setLastVoteFor(rf.me); err != nil {
+		return
+	}
 
 	var cancelQuorum int32
 
@@ -158,28 +160,27 @@ func (rf *Raft) vote() {
 	}
 }
 
-func (rf *Raft) appendLogToLocal(entry LogEntry) (index int, term int) {
-	if entry.Index <= len(rf.log)-1 {
-		if rf.log[entry.Index].Term != entry.Term {
-			rf.log = rf.log[:entry.Index]
+func (rf *Raft) appendToMembers() {
+	for i := range rf.peers {
+		if i == rf.me {
+			continue
+		}
+		if rf.matchIndex[i] == len(rf.log)-1 {
+			rf.appendEmpty(i)
 		} else {
-			DPrintf("[%d] ignore logEntry already in the log", rf.me)
-			return
+			rf.appendLogEntry(i)
 		}
 	}
-
-	rf.log = append(rf.log, entry)
-	DPrintf("[%d]-appendLogToLocal-[%+v]\n[%+v]\n", rf.me, entry, rf.log)
-	index = entry.Index
-	term = entry.Term
-
-	rf.persist()
-	return
 }
 
 func (rf *Raft) appendEmpty(i int) {
 
 	go func(j int) {
+
+		if !atomic.CompareAndSwapInt32(&rf.memberAppending[j], 0, 1) {
+			return
+		}
+
 		reply := ReplyAppendEntries{}
 		request := RequestAppendEntries{
 			Term:         rf.currentTerm,
@@ -189,21 +190,25 @@ func (rf *Raft) appendEmpty(i int) {
 
 		ok := rf.sendAppendEntries(j, &request, &reply)
 
-		if !ok {
-			return
-		}
-
-		if reply.Term > rf.currentTerm {
-			DPrintf("[%v]-[%d] appendEmpty update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
+		if ok && reply.Term > rf.currentTerm {
+			//DPrintf("[%v]-[%d] appendEmpty update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
 			rf.setTerm(reply.Term)
 			rf.transitionToFollower()
 		}
+
+		rf.memberAppending[j] = 0
+
 	}(i)
 }
 
-func (rf *Raft) appendToMembers(i int) {
+func (rf *Raft) appendLogEntry(i int) {
 
 	go func(j int) {
+
+		if !atomic.CompareAndSwapInt32(&rf.memberAppending[j], 0, 1) {
+			return
+		}
+
 		prevIndex := rf.nextIndex[j] - 1
 		logIndex := rf.nextIndex[j]
 
@@ -228,23 +233,26 @@ func (rf *Raft) appendToMembers(i int) {
 		ok := rf.sendAppendEntries(j, &request, &reply)
 
 		if !ok {
-			return
-		}
 
-		if reply.Term > rf.currentTerm {
-			rf.updateTime = time.Now()
-			DPrintf("[%v]-[%d] appendToMembers update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
+			rf.memberAppending[j] = 0
+
+		} else if reply.Term > rf.currentTerm {
+
+			DPrintf("[%d] appendToMembers update term from [%d] to [%d]\n", rf.me, rf.currentTerm, reply.Term)
 			rf.setTerm(reply.Term)
 			rf.transitionToFollower()
-			return
-		}
 
-		if reply.Success {
+		} else if reply.Success {
+
 			rf.matchIndex[j] = logIndex
 			rf.nextIndex[j]++
+
 		} else {
+
 			rf.nextIndex[j]--
 		}
+
+		rf.memberAppending[j] = 0
 
 	}(i)
 }
@@ -262,7 +270,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && rf.logNewer(args) {
 
-		rf.setLastVoteFor(args.CandidateId)
+		if err := rf.setLastVoteFor(args.CandidateId); err != nil {
+			return
+		}
+
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = true
 
@@ -274,6 +285,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 }
 
 func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntries) {
+
+	DPrintf("[%d] accept AppendEntries from [%d] , args:[%+v]", rf.me, args.LeaderId, args)
 
 	if args.Term < rf.currentTerm {
 		reply.Success = false
@@ -288,10 +301,10 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 		if rf.leaderId != args.LeaderId {
 			rf.leaderId = args.LeaderId
 		}
-		rf.updateTime = time.Now()
+
 		if rf.currentTerm != args.Term {
-			DPrintf("[%v]-[%d] AppendEntries update term from [%d] to [%d]; leader from [%d] to [%d]\n",
-				rf.updateTime, rf.me, rf.currentTerm, args.Term, rf.leaderId, args.LeaderId)
+			DPrintf("[%d] AppendEntries update term from [%d] to [%d]; leader from [%d] to [%d]\n",
+				rf.me, rf.currentTerm, args.Term, rf.leaderId, args.LeaderId)
 		}
 
 		if len(args.Entries) > 0 {
