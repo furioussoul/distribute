@@ -852,6 +852,8 @@ func TestFigure8Unreliable2C(t *testing.T) {
 
 	cfg.one(rand.Int()%10000, 1, true)
 
+	fmt.Println("pass -------1--------")
+
 	nup := servers
 	for iters := 0; iters < 1000; iters++ {
 		if iters == 200 {
@@ -888,12 +890,21 @@ func TestFigure8Unreliable2C(t *testing.T) {
 	}
 
 	for i := 0; i < servers; i++ {
+		l := len(cfg.rafts[i].log)
+		last := cfg.rafts[i].log[l-1]
+		DPrintf("[%d] last log [%+v]", i, last)
 		if cfg.connected[i] == false {
 			cfg.connect(i)
 		}
 	}
 
-	cfg.one(rand.Int()%10000, servers, true)
+	fmt.Println("pass -------2--------")
+
+	a := rand.Int() % 10000
+
+	DPrintf("cfg.one [%d]", a)
+
+	cfg.one(a, servers, true)
 
 	cfg.end()
 }

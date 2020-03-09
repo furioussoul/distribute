@@ -125,6 +125,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Command: command,
 		}
 
+		DPrintf("leader [%d][term:%d] accept log [%+v]", rf.me, rf.currentTerm, entry)
+
 		index, term = rf.appendLogToLocal(entry)
 	}
 
@@ -317,10 +319,6 @@ func (rf *Raft) transitionToCandidate() {
 
 func (rf *Raft) transitionToFollower() {
 
-	if rf.role == 1 {
-		return
-	}
-
 	if rf.ticker != nil {
 		rf.ticker.Stop()
 	}
@@ -403,10 +401,11 @@ func (rf *Raft) appendLogToLocal(entry LogEntry) (index int, term int) {
 	}
 
 	rf.log = append(rf.log, entry)
-	DPrintf("[%d]-appendLogToLocal-[%+v]\n[%+v]\n", rf.me, entry, rf.log)
+	DPrintf("[%d]-appendLogToLocal-[%+v]\n", rf.me, entry)
 	index = entry.Index
 	term = entry.Term
 
 	rf.persist()
+
 	return
 }

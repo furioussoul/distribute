@@ -2,10 +2,11 @@ package raft
 
 import (
 	"log"
+	"time"
 )
 
 // Debugging
-const Debug = 0
+const Debug = 1
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
@@ -15,6 +16,11 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 		log.Printf(format, a...)
 	}
 	return
+}
+
+func TimeoutWarning(start time.Time) {
+	spent := time.Now().Sub(start).Milliseconds()
+	DPrintf("spent: [%d]", spent)
 }
 
 type IntSlice []int
