@@ -78,7 +78,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	select {
 	case ok := <-ch:
 		return ok
-	case <-time.After(1000 * time.Millisecond):
+	case <-time.After(100 * time.Millisecond):
 		return false
 	}
 }
@@ -95,7 +95,7 @@ func (rf *Raft) sendAppendEntries(server int, args *RequestAppendEntries, reply 
 	select {
 	case ok := <-ch:
 		return ok
-	case <-time.After(1000 * time.Millisecond):
+	case <-time.After(100 * time.Millisecond):
 		return false
 	}
 }
@@ -213,10 +213,6 @@ func (rf *Raft) appendLogEntry(i int) {
 
 	go func(j int) {
 
-		if !atomic.CompareAndSwapInt32(&rf.memberAppending[j], 0, 1) {
-			return
-		}
-
 		prevIndex := rf.nextIndex[j] - 1
 		logIndex := rf.nextIndex[j]
 
@@ -238,14 +234,14 @@ func (rf *Raft) appendLogEntry(i int) {
 			LeaderCommit: rf.commitIndex,
 		}
 
-		DPrintf("[%d] send AppendEntries to [%d] , request:[%+v]", rf.me, j, request)
-
 		ok := rf.sendAppendEntries(j, &request, &reply)
 
 		if !ok {
 			rf.memberAppending[j] = 0
 			return
 		}
+
+		DPrintf("[%d] send AppendEntries to [%d] \nrequest:[%+v]\nresponse:[%+v]", rf.me, j, request, reply)
 
 		if reply.Term > rf.currentTerm {
 
@@ -263,8 +259,6 @@ func (rf *Raft) appendLogEntry(i int) {
 			rf.nextIndex[j]--
 		}
 
-		rf.memberAppending[j] = 0
-
 	}(i)
 }
 
@@ -272,16 +266,25 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	DPrintf("[%d] accept RequestVote from [%d] , args:[%+v]", rf.me, args.CandidateId, args)
 
+	if args.Term < rf.currentTerm {
+
+		reply.Term = rf.currentTerm
+		reply.VoteGranted = false
+
+		return
+	}
+
 	if args.Term > rf.currentTerm {
 
 		rf.setTerm(args.Term)
 		rf.transitionToFollower()
-
 	}
 
 	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && rf.logNewer(args) {
 
 		if err := rf.setLastVoteFor(args.CandidateId); err != nil {
+			reply.Term = rf.currentTerm
+			reply.VoteGranted = false
 			return
 		}
 
@@ -297,12 +300,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntries) {
 
+	reply.Term = rf.currentTerm
+
 	if args.Term < rf.currentTerm {
 
 		reply.Success = false
-		reply.Term = rf.currentTerm
-
-		DPrintf("[%d] accept AppendEntries from [%d] , args:[%+v]\nreply:[%+v]", rf.me, args.LeaderId, args, reply)
 
 		return
 	}
@@ -329,7 +331,6 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 
 		//DPrintf("[%d]-[%+v]-[%+v]", rf.me, args, rf.log)
 
-		reply.Term = rf.currentTerm
 		reply.Success = true
 
 		if args.LeaderCommit > rf.commitIndex {
@@ -351,8 +352,6 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 	} else {
 		reply.Success = false
 	}
-
-	DPrintf("[%d] accept AppendEntries from [%d] , args:[%+v]\nreply:[%+v]", rf.me, args.LeaderId, args, reply)
 
 	rf.transitionToFollower()
 }

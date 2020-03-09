@@ -52,8 +52,8 @@ type ApplyMsg struct {
 // A Go object implementing a single Raft peer.
 //
 type Raft struct {
-	mu           sync.Mutex // Lock to protect shared access to this peer's state
 	lock         sync.Mutex
+	persistLock  sync.Mutex
 	appenderLock sync.Mutex
 	peers        []*labrpc.ClientEnd // RPC end points of all peers
 	persister    *Persister          // Object to hold this peer's persisted state
@@ -146,8 +146,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 
 	atomic.StoreInt32(&rf.dead, 1)
-	DPrintf("[%d] crash\n", rf.me)
 	// Your code here, if desired.
+	DPrintf("[%d] crash term:[%d] voteFor:[%d] log:[%+v]\n", rf.me, rf.currentTerm, rf.votedFor, rf.log)
 }
 
 func (rf *Raft) killed() bool {
@@ -191,7 +191,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.readPersist(persister.ReadRaftState())
 	rf.transitionToFollower()
 
-	DPrintf("[node:%d][role:%d][term:%d]start\n", rf.me, rf.role, rf.currentTerm)
+	DPrintf("[%d] start term:[%d] voteFor:[%d] log:[%+v]\n", rf.me, rf.currentTerm, rf.votedFor, rf.log)
 
 	return rf
 }
@@ -302,10 +302,6 @@ func (rf *Raft) transitionToLeader() {
 }
 
 func (rf *Raft) transitionToCandidate() {
-
-	if rf.role == 2 {
-		return
-	}
 
 	if rf.ticker != nil {
 		rf.ticker.Stop()

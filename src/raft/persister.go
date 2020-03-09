@@ -91,6 +91,10 @@ func (rf *Raft) GetState() (int, bool) {
 // see paper's Figure 2 for a description of what should be persistent.
 //
 func (rf *Raft) persist() {
+
+	rf.persistLock.Lock()
+	defer rf.persistLock.Unlock()
+
 	// Your code here (2C).
 	// Example:
 	w := new(bytes.Buffer)
@@ -106,6 +110,9 @@ func (rf *Raft) persist() {
 // restore previously persisted state.
 //
 func (rf *Raft) readPersist(data []byte) {
+
+	rf.persistLock.Lock()
+	defer rf.persistLock.Unlock()
 
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return

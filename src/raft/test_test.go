@@ -680,16 +680,23 @@ func TestPersist22C(t *testing.T) {
 
 		leader1 := cfg.checkOneLeader()
 
+		DPrintf("disconnect:[%d]", (leader1+1)%servers)
+		DPrintf("disconnect:[%d]", (leader1+2)%servers)
 		cfg.disconnect((leader1 + 1) % servers)
 		cfg.disconnect((leader1 + 2) % servers)
 
 		cfg.one(10+index, servers-2, true)
 		index++
 
+		DPrintf("disconnect:[%d]", (leader1+0)%servers)
+		DPrintf("disconnect:[%d]", (leader1+3)%servers)
+		DPrintf("disconnect:[%d]", (leader1+4)%servers)
 		cfg.disconnect((leader1 + 0) % servers)
 		cfg.disconnect((leader1 + 3) % servers)
 		cfg.disconnect((leader1 + 4) % servers)
 
+		DPrintf("connect:[%d]", (leader1+1)%servers)
+		DPrintf("connect:[%d]", (leader1+2)%servers)
 		cfg.start1((leader1 + 1) % servers)
 		cfg.start1((leader1 + 2) % servers)
 		cfg.connect((leader1 + 1) % servers)
@@ -697,15 +704,20 @@ func TestPersist22C(t *testing.T) {
 
 		time.Sleep(RaftElectionTimeout)
 
+		DPrintf("connect:[%d]", (leader1+3)%servers)
 		cfg.start1((leader1 + 3) % servers)
 		cfg.connect((leader1 + 3) % servers)
 
 		cfg.one(10+index, servers-2, true)
 		index++
 
+		DPrintf("connect:[%d]", (leader1+4)%servers)
+		DPrintf("connect:[%d]", (leader1+0)%servers)
 		cfg.connect((leader1 + 4) % servers)
 		cfg.connect((leader1 + 0) % servers)
 	}
+
+	fmt.Println("pass -------1--------")
 
 	cfg.one(1000, servers, true)
 
@@ -900,9 +912,9 @@ func TestFigure8Unreliable2C(t *testing.T) {
 
 	fmt.Println("pass -------2--------")
 
-	a := rand.Int() % 10000
+	time.Sleep(time.Duration(3) * time.Second)
 
-	DPrintf("cfg.one [%d]", a)
+	a := rand.Int() % 10000
 
 	cfg.one(a, servers, true)
 
