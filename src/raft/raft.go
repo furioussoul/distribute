@@ -147,7 +147,7 @@ func (rf *Raft) Kill() {
 
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
-	DPrintf("[%d] crash term:[%d] voteFor:[%d] log:[%+v]\n", rf.me, rf.currentTerm, rf.votedFor, rf.log)
+	//DPrintf("[%d] crash term:[%d] voteFor:[%d] log:[%+v]\n", rf.me, rf.currentTerm, rf.votedFor, rf.log)
 }
 
 func (rf *Raft) killed() bool {
@@ -191,7 +191,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.readPersist(persister.ReadRaftState())
 	rf.transitionToFollower()
 
-	DPrintf("[%d] start term:[%d] voteFor:[%d] log:[%+v]\n", rf.me, rf.currentTerm, rf.votedFor, rf.log)
+	//DPrintf("[%d] start term:[%d] voteFor:[%d] log:[%+v]\n", rf.me, rf.currentTerm, rf.votedFor, rf.log)
 
 	return rf
 }
@@ -328,25 +328,6 @@ func (rf *Raft) transitionToFollower() {
 func (rf *Raft) calElectionTimeout() int64 {
 	n := rand.Int63n(rf.electionTimeout.Milliseconds()) + rf.electionTimeout.Milliseconds()
 	return n
-}
-
-func (rf *Raft) logMatch(prevTerm int, prevIndex int) bool {
-
-	flag := true
-
-	if prevIndex > len(rf.log)-1 {
-		flag = false
-	} else {
-		prev := rf.log[prevIndex]
-		if prev.Term != prevTerm {
-			flag = false
-		}
-	}
-
-	if !flag {
-		//DPrintf("[%d] log mismatch, prevIndex:[%d],prevTerm:[%d],requestEntry:[%+v],myLog:[%+v]", rf.me, prevIndex, prevTerm, logEntries[0], rf.log)
-	}
-	return flag
 }
 
 func (rf *Raft) setTerm(term int) {

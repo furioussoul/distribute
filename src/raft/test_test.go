@@ -9,10 +9,6 @@ package raft
 //
 
 import (
-	"bufio"
-	"io"
-	"os"
-	"strings"
 	"testing"
 )
 import "fmt"
@@ -504,6 +500,9 @@ func TestBackup2B(t *testing.T) {
 		DPrintf("connect:[%d]", i)
 		cfg.connect(i)
 	}
+
+	time.Sleep(time.Duration(5) * time.Second)
+
 	cfg.one(rand.Int(), servers, true)
 
 	cfg.end()
@@ -909,10 +908,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 			cfg.connect(i)
 		}
 	}
-
 	fmt.Println("pass -------2--------")
-
-	time.Sleep(time.Duration(3) * time.Second)
 
 	a := rand.Int() % 10000
 
@@ -1072,28 +1068,4 @@ func TestReliableChurn2C(t *testing.T) {
 
 func TestUnreliableChurn2C(t *testing.T) {
 	internalChurn(t, true)
-}
-
-func TestRead(t *testing.T) {
-
-	f, err := os.Open("/Users/szj/Downloads/test_data/list.txt")
-	if err != nil {
-		t.Fatal(err.Error())
-	}
-	defer f.Close()
-	buf := bufio.NewReader(f)
-	for {
-		line, err := buf.ReadString('\n')
-		line = strings.TrimSpace(line)
-		fmt.Println(line)
-		if err != nil {
-			if err == io.EOF {
-				fmt.Println("File read ok!")
-				break
-			} else {
-				fmt.Println("Read file error!", err)
-				return
-			}
-		}
-	}
 }

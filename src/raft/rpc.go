@@ -33,8 +33,10 @@ type RequestAppendEntries struct {
 }
 
 type ReplyAppendEntries struct {
-	Term    int
-	Success bool
+	Term          int
+	ConflictIndex int
+	ConflictTerm  int
+	Success       bool
 }
 
 //
@@ -256,7 +258,31 @@ func (rf *Raft) appendLogEntry(i int) {
 
 		} else {
 
-			rf.nextIndex[j]--
+			//DPrintf("[%d]-[%+v]", rf.me, rf.log)
+
+			if reply.ConflictTerm == -1 {
+
+				rf.nextIndex[j] = reply.ConflictIndex
+
+			} else {
+
+				found := false
+				nextIndex := 0
+
+				for i := len(rf.log) - 1; i > 0; i-- {
+					if reply.ConflictTerm == rf.log[i].Term {
+						found = true
+						nextIndex = i
+						break
+					}
+				}
+
+				if found {
+					rf.nextIndex[j] = nextIndex + 1
+				} else {
+					rf.nextIndex[j] = reply.ConflictIndex
+				}
+			}
 		}
 
 	}(i)
@@ -309,51 +335,77 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 		return
 	}
 
+	/*if rf.currentTerm != args.Term {
+		DPrintf("[%d] AppendEntries update term from [%d] to [%d]; leader from [%d] to [%d]\n",
+			rf.me, rf.currentTerm, args.Term, rf.leaderId, args.LeaderId)
+	}*/
+
 	if args.Term > rf.currentTerm {
 		rf.setTerm(args.Term)
 	}
 
-	if len(args.Entries) == 0 || rf.logMatch(args.PrevLogTerm, args.PrevLogIndex) {
-
-		if rf.currentTerm != args.Term {
-			DPrintf("[%d] AppendEntries update term from [%d] to [%d]; leader from [%d] to [%d]\n",
-				rf.me, rf.currentTerm, args.Term, rf.leaderId, args.LeaderId)
-		}
+	if len(args.Entries) == 0 {
 
 		if rf.leaderId != args.LeaderId {
 			rf.leaderId = args.LeaderId
 		}
 
-		if len(args.Entries) > 0 {
-			DPrintf("[%d] prevIndex:[%d] prevTerm:[%d]", rf.me, args.PrevLogIndex, args.PrevLogTerm)
-			rf.appendLogToLocal(args.Entries[0])
-		}
-
-		//DPrintf("[%d]-[%+v]-[%+v]", rf.me, args, rf.log)
-
 		reply.Success = true
 
-		if args.LeaderCommit > rf.commitIndex {
-			prevCommitIndex := rf.commitIndex
-			rf.commitIndex = min(args.LeaderCommit, len(rf.log)-1)
-			if rf.commitIndex > prevCommitIndex {
-				for i := prevCommitIndex + 1; i <= rf.commitIndex; i++ {
-					msg := ApplyMsg{
-						CommandValid: true,
-						CommandIndex: rf.log[i].Index,
-						Command:      rf.log[i].Command,
-					}
-					DPrintf("[%d] commit index:[%d]\n", rf.me, i)
-					rf.applyCh <- msg
-				}
-			}
-		}
+		rf.commit(args)
+
+		return
+
+	}
+
+	if args.PrevLogIndex > len(rf.log)-1 {
+
+		reply.Success = false
+		reply.ConflictIndex = len(rf.log)
+		reply.ConflictTerm = -1
 
 	} else {
-		reply.Success = false
+
+		prevTerm := rf.log[args.PrevLogIndex].Term
+
+		if prevTerm != args.PrevLogTerm {
+			reply.Success = false
+			reply.ConflictTerm = prevTerm
+			for i, e := range rf.log {
+				if e.Term == prevTerm {
+					reply.ConflictIndex = i
+					break
+				}
+			}
+
+			//DPrintf("[%d]-[%+v]", rf.me, rf.log)
+
+		} else {
+			reply.Success = true
+			rf.appendLogToLocal(args.Entries[0])
+		}
 	}
 
 	rf.transitionToFollower()
+}
+
+func (rf *Raft) commit(args *RequestAppendEntries) {
+
+	if args.LeaderCommit > rf.commitIndex {
+		prevCommitIndex := rf.commitIndex
+		rf.commitIndex = min(args.LeaderCommit, len(rf.log)-1)
+		if rf.commitIndex > prevCommitIndex {
+			for i := prevCommitIndex + 1; i <= rf.commitIndex; i++ {
+				msg := ApplyMsg{
+					CommandValid: true,
+					CommandIndex: rf.log[i].Index,
+					Command:      rf.log[i].Command,
+				}
+				DPrintf("[%d] commit index:[%d]\n", rf.me, i)
+				rf.applyCh <- msg
+			}
+		}
+	}
 }
 
 func (rf *Raft) logNewer(args *RequestVoteArgs) bool {
