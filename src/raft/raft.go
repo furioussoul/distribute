@@ -75,6 +75,7 @@ type Raft struct {
 	electionTimeout   time.Duration
 	heartBeatInterval time.Duration
 	timer             *time.Timer
+	voteTimeoutTicker *time.Ticker
 	ticker            *time.Ticker
 
 	log         []LogEntry
@@ -198,6 +199,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 // invoke rf.hb() when timeout
 func (rf *Raft) timeout(cb func()) {
+
 	if rf.timer != nil {
 		rf.timer.Stop()
 	}
@@ -281,12 +283,14 @@ func (rf *Raft) resetCommitIndex() {
 
 func (rf *Raft) transitionToLeader() {
 
-	if rf.role == 3 {
-		return
-	}
-
 	if rf.ticker != nil {
 		rf.ticker.Stop()
+	}
+	if rf.timer != nil {
+		rf.timer.Stop()
+	}
+	if rf.voteTimeoutTicker != nil {
+		rf.voteTimeoutTicker.Stop()
 	}
 
 	DPrintf("[%d] election #win transition to leader [term:%d]\n", rf.me, rf.currentTerm)
@@ -306,6 +310,9 @@ func (rf *Raft) transitionToCandidate() {
 	if rf.ticker != nil {
 		rf.ticker.Stop()
 	}
+	if rf.timer != nil {
+		rf.timer.Stop()
+	}
 
 	rf.role = 2
 	DPrintf("[%v] transitionToCandidate update term from [%d] to [%d]\n", rf.me, rf.currentTerm, rf.currentTerm+1)
@@ -317,6 +324,12 @@ func (rf *Raft) transitionToFollower() {
 
 	if rf.ticker != nil {
 		rf.ticker.Stop()
+	}
+	if rf.timer != nil {
+		rf.timer.Stop()
+	}
+	if rf.voteTimeoutTicker != nil {
+		rf.voteTimeoutTicker.Stop()
 	}
 
 	rf.role = 1
@@ -341,9 +354,6 @@ func (rf *Raft) setTerm(term int) {
 }
 
 func (rf *Raft) setLastVoteFor(candidate int) error {
-
-	rf.lock.Lock()
-	defer rf.lock.Unlock()
 
 	if rf.votedFor != -1 && candidate != -1 {
 		errMsg := fmt.Sprintf("[%d] Already voted for another candidate", rf.me)
@@ -373,13 +383,15 @@ func (rf *Raft) appendLogToLocal(entry LogEntry) (index int, term int) {
 			rf.log = rf.log[:entry.Index]
 		} else {
 			DPrintf("[%d] ignore logEntry already in the log", rf.me)
+			index = entry.Index
+			term = entry.Term
 			return
 		}
 	}
 
 	rf.log = append(rf.log, entry)
 	DPrintf("[%d]-appendLogToLocal-[%+v]\n", rf.me, entry)
-	index = entry.Index
+	index = len(rf.log) - 1
 	term = entry.Term
 
 	rf.persist()

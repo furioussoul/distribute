@@ -80,7 +80,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	select {
 	case ok := <-ch:
 		return ok
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(250 * time.Millisecond):
 		return false
 	}
 }
@@ -97,7 +97,7 @@ func (rf *Raft) sendAppendEntries(server int, args *RequestAppendEntries, reply 
 	select {
 	case ok := <-ch:
 		return ok
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(250 * time.Millisecond):
 		return false
 	}
 }
@@ -126,13 +126,18 @@ func (rf *Raft) vote() {
 		}
 	})
 
-	go rf.timeout(func() {
-		if !atomic.CompareAndSwapInt32(&cancelQuorum, 0, 1) {
-			return
+	rf.voteTimeoutTicker = time.NewTicker(time.Duration(1000) * time.Millisecond)
+
+	go func() {
+		select {
+		case <-rf.voteTimeoutTicker.C:
+			if !atomic.CompareAndSwapInt32(&cancelQuorum, 0, 1) {
+				return
+			}
+			DPrintf("[%d] vote timeout restart vote", rf.me)
+			rf.vote()
 		}
-		DPrintf("[%d] vote timeout restart vote", rf.me)
-		rf.vote()
-	})
+	}()
 
 	for i := range rf.peers {
 

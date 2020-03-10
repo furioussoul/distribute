@@ -440,9 +440,6 @@ func TestBackup2B(t *testing.T) {
 	cfg.disconnect((leader1 + 0) % servers)
 	cfg.disconnect((leader1 + 1) % servers)
 
-	DPrintf("connect:[%d]", (leader1+2)%servers)
-	DPrintf("connect:[%d]", (leader1+3)%servers)
-	DPrintf("connect:[%d]", (leader1+4)%servers)
 	// allow other partition to recover
 	cfg.connect((leader1 + 2) % servers)
 	cfg.connect((leader1 + 3) % servers)
@@ -478,22 +475,20 @@ func TestBackup2B(t *testing.T) {
 		cfg.disconnect(i)
 	}
 
-	DPrintf("connect:[%d]", (leader1+0)%servers)
-	DPrintf("connect:[%d]", (leader1+1)%servers)
-	DPrintf("connect:[%d]", other)
+	DPrintf("connect:[%d] term:[%d] log:[%+v]", (leader1+0)%servers, cfg.rafts[(leader1+0)%servers].currentTerm, cfg.rafts[(leader1+0)%servers].log)
+	DPrintf("connect:[%d] term:[%d] log:[%+v]", (leader1+1)%servers, cfg.rafts[(leader1+1)%servers].currentTerm, cfg.rafts[(leader1+1)%servers].log)
+	DPrintf("connect:[%d] term:[%d] log:[%+v]", other, cfg.rafts[other].currentTerm, cfg.rafts[other].log)
 
 	cfg.connect((leader1 + 0) % servers)
 	cfg.connect((leader1 + 1) % servers)
 	cfg.connect(other)
-
-	fmt.Println("pass -------2--------")
 
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
 		cfg.one(rand.Int(), 3, true)
 	}
 
-	fmt.Println("pass -------3--------")
+	fmt.Println("pass -------2--------")
 
 	// now everyone
 	for i := 0; i < servers; i++ {
