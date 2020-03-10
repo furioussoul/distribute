@@ -152,10 +152,11 @@ func (rf *Raft) vote() {
 
 			ok := rf.sendRequestVote(j, &args, &reply)
 
-			if !ok {
-				DPrintf("vote err")
-				quorum.fail()
-			} else if reply.Term > rf.currentTerm {
+			if !ok || rf.role != 2 || args.Term != rf.currentTerm {
+				return
+			}
+
+			if reply.Term > rf.currentTerm {
 				DPrintf("Received greater term from [%d]", j)
 				atomic.CompareAndSwapInt32(&cancelQuorum, 0, 1)
 				rf.setTerm(reply.Term)
@@ -202,7 +203,11 @@ func (rf *Raft) appendEmpty(i int) {
 
 		ok := rf.sendAppendEntries(j, &request, &reply)
 
-		if ok && reply.Term > rf.currentTerm {
+		if !ok || request.Term != rf.currentTerm || rf.role != 3 {
+			return
+		}
+
+		if reply.Term > rf.currentTerm {
 			//DPrintf("[%v]-[%d] appendEmpty update term from [%d] to [%d]\n", rf.updateTime, rf.me, rf.currentTerm, reply.Term)
 			rf.setTerm(reply.Term)
 			rf.transitionToFollower()
@@ -238,7 +243,7 @@ func (rf *Raft) appendLogEntry(i int) {
 
 		ok := rf.sendAppendEntries(j, &request, &reply)
 
-		if !ok {
+		if !ok || request.Term != rf.currentTerm || rf.role != 3 {
 			rf.memberAppending[j] = 0
 			return
 		}
@@ -353,6 +358,7 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 		reply.Success = true
 
 		rf.commit(args)
+		rf.transitionToFollower()
 
 		return
 
@@ -383,6 +389,7 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 		} else {
 			reply.Success = true
 			rf.appendLogToLocal(args.Entries[0])
+			rf.commit(args)
 		}
 	}
 
