@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 )
 
-const Debug = 0
+const Debug = 1
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
@@ -34,14 +34,52 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	db     map[string]string
+	rwlock sync.RWMutex
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	kv.rwlock.RLock()
+	defer kv.rwlock.RUnlock()
+
+	val, ok := kv.db[args.Key]
+	if !ok {
+		reply.Err = "key not exists"
+	} else {
+		reply.Value = val
+	}
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	//DPrintf("PutAppendArgs [%+v]", args)
+
+	c := make(chan raft.ApplyMsg)
+
+	go func() {
+		kv.rwlock.Lock()
+		defer kv.rwlock.Unlock()
+
+		if args.Op == "Put" {
+
+			start, i, b := kv.rf.Start(args)
+
+		} else if args.Op == "Append" {
+
+			if _, ok := kv.db[args.Key]; ok {
+
+				args.Value = kv.db[args.Key] + args.Value
+			}
+
+			start, i, b := kv.rf.Start(args)
+
+		} else {
+			DPrintf("unsupported op [%s]", args.Op)
+		}
+
+	}()
+
 }
 
 //
@@ -94,6 +132,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
+	kv.db = make(map[string]string)
 
 	return kv
 }

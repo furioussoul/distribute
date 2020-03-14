@@ -104,7 +104,7 @@ func (rf *Raft) sendAppendEntries(server int, args *RequestAppendEntries, reply 
 
 func (rf *Raft) vote() {
 
-	DPrintf("[%d] start vote term[%d]", rf.me, rf.currentTerm)
+	DPrintf("2B [%d] start vote term[%d]", rf.me, rf.currentTerm)
 
 	rf.setTerm(rf.currentTerm + 1)
 	if err := rf.setLastVoteFor(rf.me); err != nil {
@@ -134,7 +134,7 @@ func (rf *Raft) vote() {
 			if !atomic.CompareAndSwapInt32(&cancelQuorum, 0, 1) {
 				return
 			}
-			DPrintf("[%d] vote timeout restart vote", rf.me)
+			DPrintf("2B [%d] vote timeout restart vote", rf.me)
 			rf.vote()
 		}
 	}()
@@ -162,18 +162,18 @@ func (rf *Raft) vote() {
 			}
 
 			if reply.Term > rf.currentTerm {
-				DPrintf("Received greater term from [%d]", j)
+				DPrintf("2B Received greater term from [%d]", j)
 				atomic.CompareAndSwapInt32(&cancelQuorum, 0, 1)
 				rf.setTerm(reply.Term)
 				rf.transitionToFollower()
 			} else if !reply.VoteGranted {
-				DPrintf("[%d] vote fail1 from [%d]", rf.me, j)
+				DPrintf("2B [%d] vote fail1 from [%d]", rf.me, j)
 				quorum.fail()
 			} else if rf.currentTerm != reply.Term {
-				DPrintf("[%d] vote fail2 from [%d]", rf.me, j)
+				DPrintf("2B [%d] vote fail2 from [%d]", rf.me, j)
 				quorum.fail()
 			} else {
-				DPrintf("[%d] vote succeed from [%d]", rf.me, j)
+				DPrintf("2B [%d] vote succeed from [%d]", rf.me, j)
 				quorum.succeed()
 			}
 		}(i)
@@ -204,7 +204,7 @@ func (rf *Raft) appendEmpty(i int) {
 			LeaderCommit: rf.commitIndex,
 		}
 
-		DPrintf("[%d] send AppendEmpty to [%d]", rf.me, j)
+		DPrintf("2B [%d] send AppendEmpty to [%d]", rf.me, j)
 
 		ok := rf.sendAppendEntries(j, &request, &reply)
 
@@ -253,11 +253,11 @@ func (rf *Raft) appendLogEntry(i int) {
 			return
 		}
 
-		DPrintf("[%d] send AppendEntries to [%d] \nrequest:[%+v]\nresponse:[%+v]", rf.me, j, request, reply)
+		DPrintf("2B [%d] send AppendEntries to [%d] \nrequest:[%+v]\nresponse:[%+v]", rf.me, j, request, reply)
 
 		if reply.Term > rf.currentTerm {
 
-			DPrintf("[%d] appendToMembers update term from [%d] to [%d]\n", rf.me, rf.currentTerm, reply.Term)
+			DPrintf("2B [%d] appendToMembers update term from [%d] to [%d]\n", rf.me, rf.currentTerm, reply.Term)
 			rf.setTerm(reply.Term)
 			rf.transitionToFollower()
 
@@ -300,7 +300,7 @@ func (rf *Raft) appendLogEntry(i int) {
 
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
-	DPrintf("[%d] accept RequestVote from [%d] , args:[%+v]", rf.me, args.CandidateId, args)
+	DPrintf("2B [%d] accept RequestVote from [%d] , args:[%+v]", rf.me, args.CandidateId, args)
 
 	if args.Term < rf.currentTerm {
 
@@ -413,7 +413,7 @@ func (rf *Raft) commit(args *RequestAppendEntries) {
 					CommandIndex: rf.log[i].Index,
 					Command:      rf.log[i].Command,
 				}
-				DPrintf("[%d] commit index:[%d]\n", rf.me, i)
+				DPrintf("2B [%d] commit index:[%d]\n", rf.me, i)
 				rf.applyCh <- msg
 			}
 		}

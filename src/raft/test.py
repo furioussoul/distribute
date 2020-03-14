@@ -133,10 +133,15 @@ def deal_cifar10_data(context, line):
         print(label)
 
 
-convertCifar10()
+# convertCifar10()
 # file = open(path)
 #
 # for line in file:
 #     deal_line2(line)
 #
 # file.close()
+
+data1 = {'release_center':'/gpfs/application/train/f0480ef3c622486ea2e1df4c4d719815/model/release','gpus':0}
+
+json.dumps(data1)
+

@@ -2,17 +2,18 @@ package raft
 
 import (
 	"log"
+	"strings"
 	"time"
 )
 
 // Debugging
-const Debug = 0
+const Debug = 1
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
-		//if strings.Contains(format, "update term from") {
-		//	return
-		//}
+		if strings.Contains(format, "2B") {
+			return
+		}
 		log.Printf(format, a...)
 	}
 	return

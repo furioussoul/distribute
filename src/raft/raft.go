@@ -126,7 +126,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Command: command,
 		}
 
-		DPrintf("leader [%d][term:%d] accept log [%+v]", rf.me, rf.currentTerm, entry)
+		DPrintf("2B leader [%d][term:%d] accept log [%+v]", rf.me, rf.currentTerm, entry)
 
 		index, term = rf.appendLogToLocal(entry)
 	}
@@ -263,7 +263,7 @@ func (rf *Raft) resetCommitIndex() {
 
 	//DPrintf("[%d],agreeIndex:[%d],commitIndex:[%d]", rf.me, agreeIndex, rf.commitIndex)
 	if rf.log[agreeIndex].Term == rf.currentTerm && agreeIndex > rf.commitIndex {
-		DPrintf("[%d] commit index:[%d] matchIndex:[%+v]\n", rf.me, agreeIndex, rf.matchIndex)
+		DPrintf("2B [%d] commit index:[%d] matchIndex:[%+v]\n", rf.me, agreeIndex, rf.matchIndex)
 
 		if agreeIndex > rf.commitIndex {
 			for i := rf.commitIndex; i <= agreeIndex; i++ {
@@ -293,7 +293,7 @@ func (rf *Raft) transitionToLeader() {
 		rf.voteTimeoutTicker.Stop()
 	}
 
-	DPrintf("[%d] election #win transition to leader [term:%d]\n", rf.me, rf.currentTerm)
+	DPrintf("2B [%d] election #win transition to leader [term:%d]\n", rf.me, rf.currentTerm)
 
 	rf.role = 3
 	rf.leaderId = rf.me
@@ -315,7 +315,7 @@ func (rf *Raft) transitionToCandidate() {
 	}
 
 	rf.role = 2
-	DPrintf("[%v] transitionToCandidate update term from [%d] to [%d]\n", rf.me, rf.currentTerm, rf.currentTerm+1)
+	DPrintf("2B [%v] transitionToCandidate update term from [%d] to [%d]\n", rf.me, rf.currentTerm, rf.currentTerm+1)
 
 	go rf.timeout(rf.vote)
 }
@@ -333,7 +333,7 @@ func (rf *Raft) transitionToFollower() {
 	}
 
 	rf.role = 1
-	DPrintf("[%d] transition to follower [term:%d]\n", rf.me, rf.currentTerm)
+	DPrintf("2B [%d] transition to follower [term:%d]\n", rf.me, rf.currentTerm)
 
 	go rf.timeout(rf.transitionToCandidate)
 }
@@ -349,7 +349,7 @@ func (rf *Raft) setTerm(term int) {
 		rf.leaderId = -1
 		rf.votedFor = -1
 		rf.persist()
-		DPrintf("[%d] Set term [%d]", rf.me, term)
+		DPrintf("2B [%d] Set term [%d]", rf.me, term)
 	}
 }
 
@@ -365,9 +365,9 @@ func (rf *Raft) setLastVoteFor(candidate int) error {
 	rf.persist()
 
 	if candidate != -1 {
-		DPrintf("[%d] vote for [%d]", rf.me, candidate)
+		DPrintf("2B [%d] vote for [%d]", rf.me, candidate)
 	} else {
-		DPrintf("[%d] reset lastVoteFor = -1", rf.me)
+		DPrintf("2B [%d] reset lastVoteFor = -1", rf.me)
 	}
 
 	return nil
@@ -382,7 +382,7 @@ func (rf *Raft) appendLogToLocal(entry LogEntry) (index int, term int) {
 		if rf.log[entry.Index].Term != entry.Term {
 			rf.log = rf.log[:entry.Index]
 		} else {
-			DPrintf("[%d] ignore logEntry already in the log", rf.me)
+			DPrintf("2B [%d] ignore logEntry already in the log", rf.me)
 			index = entry.Index
 			term = entry.Term
 			return
@@ -390,7 +390,7 @@ func (rf *Raft) appendLogToLocal(entry LogEntry) (index int, term int) {
 	}
 
 	rf.log = append(rf.log, entry)
-	DPrintf("[%d]-appendLogToLocal-[%+v]\n", rf.me, entry)
+	DPrintf("2B [%d]-appendLogToLocal-[%+v]\n", rf.me, entry)
 	index = len(rf.log) - 1
 	term = entry.Term
 
