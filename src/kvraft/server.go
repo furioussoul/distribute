@@ -42,8 +42,6 @@ type KVServer struct {
 	db       map[string]string
 	ack      map[int]int
 	commitCh map[int]chan Op
-
-	rwlock sync.RWMutex
 }
 
 func (kv *KVServer) commitEntryLog(entry Op) Err {
@@ -53,13 +51,12 @@ func (kv *KVServer) commitEntryLog(entry Op) Err {
 		return ErrWrongLeader
 	}
 
-	kv.mu.Lock()
 	ch, ok := kv.commitCh[index]
 	if !ok {
 		ch = make(chan Op, 1)
 		kv.commitCh[index] = ch
 	}
-	kv.mu.Unlock()
+
 	select {
 	case op := <-ch:
 		if op != entry {
@@ -80,7 +77,6 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		SeqId: args.SeqId,
 	}
 
-	//DPrintf("command %v", command)
 	err := kv.commitEntryLog(entry)
 	if err == OK {
 		reply.Value = kv.db[args.Key]
@@ -139,14 +135,15 @@ func (kv *KVServer) ApplyToKvDb(args Op) {
 	switch args.Type {
 	case "Put":
 		kv.db[args.Key] = args.Value
-		DPrintf("seqId[%d] -- key[%s] -- val[%s]", args.SeqId, args.Key, kv.db[args.Key])
+		kv.ack[args.Id] = args.SeqId
+		DPrintf("Put ckId[%d] -- seqId[%d] -- key[%s] -- val[%s]", args.Id, args.SeqId, args.Key, kv.db[args.Key])
 	case "Append":
 		kv.db[args.Key] += args.Value
-		DPrintf("seqId[%d] -- key[%s] -- val[%s]", args.SeqId, args.Key, kv.db[args.Key])
+		kv.ack[args.Id] = args.SeqId
+		DPrintf("Append ckId[%d] -- seqId[%d] -- key[%s] -- val[%s]", args.Id, args.SeqId, args.Key, kv.db[args.Key])
+	case "Get":
+		DPrintf("Get ckId[%d] -- seqId[%d] -- key[%s] -- val[%s]", args.Id, args.SeqId, args.Key, kv.db[args.Key])
 	}
-
-	kv.ack[args.Id] = args.SeqId
-
 }
 
 func (kv *KVServer) listenApplied() {

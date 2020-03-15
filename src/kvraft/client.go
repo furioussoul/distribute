@@ -37,9 +37,9 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 // arguments. and reply must be passed as a pointer.
 //
 func (ck *Clerk) Get(key string) string {
-
-	// You will have to modify this function.
 	ck.mu.Lock()
+	defer ck.mu.Unlock()
+
 	args := GetArgs{
 		Key:   key,
 		Id:    ck.id,
@@ -47,7 +47,6 @@ func (ck *Clerk) Get(key string) string {
 	}
 	reply := GetReply{}
 	ck.seqId++
-	ck.mu.Unlock()
 
 	for {
 		for i := range ck.servers {
@@ -73,6 +72,8 @@ func (ck *Clerk) Get(key string) string {
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
 	ck.mu.Lock()
+	defer ck.mu.Unlock()
+
 	args := PutAppendArgs{
 		Key:   key,
 		Value: value,
@@ -82,13 +83,12 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	}
 	reply := PutAppendReply{}
 	ck.seqId++
-	ck.mu.Unlock()
 
 	for {
 		for i := range ck.servers {
 			ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
 			if ok && reply.Err == OK {
-				DPrintf("write -- key[%s] -- val[%s] -- reply [%+v]", args.Key, args.Value, reply)
+				//DPrintf("write -- key[%s] -- val[%s] -- reply [%+v]", args.Key, args.Value, reply)
 				return
 			}
 		}
