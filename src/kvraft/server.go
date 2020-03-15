@@ -22,6 +22,11 @@ type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	Type  string // Put / Append / Get
+	Key   string
+	Value string
+	Id    int
+	SeqId int
 }
 
 type KVServer struct {
@@ -34,52 +39,71 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	db     map[string]string
+	db       map[string]string
+	ack      map[int]int
+	commitCh map[int]chan Op
+
 	rwlock sync.RWMutex
+}
+
+func (kv *KVServer) commitEntryLog(entry Op) Err {
+
+	index, _, isLeader := kv.rf.Start(entry)
+	if !isLeader {
+		return ErrWrongLeader
+	}
+
+	kv.mu.Lock()
+	ch, ok := kv.commitCh[index]
+	if !ok {
+		ch = make(chan Op, 1)
+		kv.commitCh[index] = ch
+	}
+	kv.mu.Unlock()
+	select {
+	case op := <-ch:
+		if op != entry {
+			return ErrUnexpected
+		}
+	}
+
+	return OK
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
-	kv.rwlock.RLock()
-	defer kv.rwlock.RUnlock()
 
-	val, ok := kv.db[args.Key]
-	if !ok {
-		reply.Err = "key not exists"
-	} else {
-		reply.Value = val
+	entry := Op{
+		Type:  "Get",
+		Key:   args.Key,
+		Id:    args.Id,
+		SeqId: args.SeqId,
 	}
+
+	//DPrintf("command %v", command)
+	err := kv.commitEntryLog(entry)
+	if err == OK {
+		reply.Value = kv.db[args.Key]
+	}
+
+	reply.Err = err
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
 	//DPrintf("PutAppendArgs [%+v]", args)
+	entry := Op{
+		Type:  args.Op,
+		Key:   args.Key,
+		Value: args.Value,
+		Id:    args.Id,
+		SeqId: args.SeqId,
+	}
 
-	c := make(chan raft.ApplyMsg)
+	//DPrintf("command %v", command)
 
-	go func() {
-		kv.rwlock.Lock()
-		defer kv.rwlock.Unlock()
-
-		if args.Op == "Put" {
-
-			start, i, b := kv.rf.Start(args)
-
-		} else if args.Op == "Append" {
-
-			if _, ok := kv.db[args.Key]; ok {
-
-				args.Value = kv.db[args.Key] + args.Value
-			}
-
-			start, i, b := kv.rf.Start(args)
-
-		} else {
-			DPrintf("unsupported op [%s]", args.Op)
-		}
-
-	}()
-
+	err := kv.commitEntryLog(entry)
+	reply.Err = err
 }
 
 //
@@ -101,6 +125,51 @@ func (kv *KVServer) Kill() {
 func (kv *KVServer) killed() bool {
 	z := atomic.LoadInt32(&kv.dead)
 	return z == 1
+}
+
+func (kv *KVServer) CheckDup(id int, seqId int) bool {
+	v, ok := kv.ack[id]
+	if ok {
+		return v >= seqId
+	}
+	return false
+}
+
+func (kv *KVServer) ApplyToKvDb(args Op) {
+	switch args.Type {
+	case "Put":
+		kv.db[args.Key] = args.Value
+		DPrintf("seqId[%d] -- key[%s] -- val[%s]", args.SeqId, args.Key, kv.db[args.Key])
+	case "Append":
+		kv.db[args.Key] += args.Value
+		DPrintf("seqId[%d] -- key[%s] -- val[%s]", args.SeqId, args.Key, kv.db[args.Key])
+	}
+
+	kv.ack[args.Id] = args.SeqId
+
+}
+
+func (kv *KVServer) listenApplied() {
+	go func() {
+		for {
+			msg := <-kv.applyCh
+			op := msg.Command.(Op)
+			kv.mu.Lock()
+			if !kv.CheckDup(op.Id, op.SeqId) {
+				kv.ApplyToKvDb(op)
+			}
+
+			ch, ok := kv.commitCh[msg.CommandIndex]
+			if ok {
+				select {
+				case <-kv.commitCh[msg.CommandIndex]:
+				default:
+				}
+				ch <- op
+			}
+			kv.mu.Unlock()
+		}
+	}()
 }
 
 //
@@ -133,6 +202,10 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	// You may need initialization code here.
 	kv.db = make(map[string]string)
+	kv.ack = make(map[int]int)
+	kv.commitCh = make(map[int]chan Op)
+
+	kv.listenApplied()
 
 	return kv
 }

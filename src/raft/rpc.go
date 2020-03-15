@@ -414,7 +414,9 @@ func (rf *Raft) commit(args *RequestAppendEntries) {
 					Command:      rf.log[i].Command,
 				}
 				DPrintf("2B [%d] commit index:[%d]\n", rf.me, i)
-				rf.applyCh <- msg
+				if i > 0 {
+					rf.applyCh <- msg
+				}
 			}
 		}
 	}

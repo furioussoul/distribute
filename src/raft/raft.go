@@ -126,7 +126,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Command: command,
 		}
 
-		DPrintf("2B leader [%d][term:%d] accept log [%+v]", rf.me, rf.currentTerm, entry)
+		DPrintf("leader [%d][term:%d] accept log [%+v]", rf.me, rf.currentTerm, entry)
 
 		index, term = rf.appendLogToLocal(entry)
 	}
@@ -268,12 +268,14 @@ func (rf *Raft) resetCommitIndex() {
 		if agreeIndex > rf.commitIndex {
 			for i := rf.commitIndex; i <= agreeIndex; i++ {
 				entry := rf.log[i]
-				msg := ApplyMsg{
-					CommandValid: true,
-					CommandIndex: entry.Index,
-					Command:      entry.Command,
+				if i > 0 {
+					msg := ApplyMsg{
+						CommandValid: true,
+						CommandIndex: entry.Index,
+						Command:      entry.Command,
+					}
+					rf.applyCh <- msg
 				}
-				rf.applyCh <- msg
 			}
 		}
 
@@ -293,7 +295,7 @@ func (rf *Raft) transitionToLeader() {
 		rf.voteTimeoutTicker.Stop()
 	}
 
-	DPrintf("2B [%d] election #win transition to leader [term:%d]\n", rf.me, rf.currentTerm)
+	DPrintf("[%d] election #win transition to leader [term:%d]\n", rf.me, rf.currentTerm)
 
 	rf.role = 3
 	rf.leaderId = rf.me
