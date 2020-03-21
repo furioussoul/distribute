@@ -90,7 +90,9 @@ func (ck *Clerk) Get(key string) string {
 	for {
 		for i := range ck.servers {
 			ok := ck.servers[i].Call("KVServer.Get", &args, &reply)
+			DPrintf("READ -- args[%+v] -- reply [%+v]", args, reply)
 			if ok && reply.Err == OK {
+				DPrintf("leader [%d]", i)
 				return reply.Value
 			}
 		}
@@ -126,8 +128,9 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	for {
 		for i := range ck.servers {
 			ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
+			DPrintf("write -- args[%+v] -- val[%s] -- reply [%+v]", args, args.Value, reply)
 			if ok && reply.Err == OK {
-				//DPrintf("write -- key[%s] -- val[%s] -- reply [%+v]", args.Key, args.Value, reply)
+				DPrintf("leader [%d]", i)
 				return
 			}
 		}

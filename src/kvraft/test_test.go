@@ -1,6 +1,9 @@
 package kvraft
 
-import "../linearizability"
+import (
+	"../linearizability"
+	"fmt"
+)
 
 import "testing"
 import "strconv"
@@ -190,7 +193,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 		clnts[i] = make(chan int)
 	}
 	for i := 0; i < 3; i++ {
-		// log.Printf("Iteration %v\n", i)
+		log.Printf("Iteration %v\n", i)
 		atomic.StoreInt32(&done_clients, 0)
 		atomic.StoreInt32(&done_partitioner, 0)
 		go spawn_clients_and_wait(t, cfg, nclients, func(cli int, myck *Clerk, t *testing.T) {
@@ -202,6 +205,8 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 			key := strconv.Itoa(cli)
 			Put(cfg, myck, key, last)
 			for atomic.LoadInt32(&done_clients) == 0 {
+				fmt.Println(33333333)
+
 				if (rand.Int() % 1000) < 500 {
 					nv := "x " + strconv.Itoa(cli) + " " + strconv.Itoa(j) + " y"
 					// log.Printf("%d: client new append %v\n", cli, nv)
@@ -216,19 +221,23 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 					}
 				}
 			}
+			fmt.Println(22222222)
 		})
 
 		if partitions {
 			// Allow the clients to perform some operations without interruption
 			time.Sleep(1 * time.Second)
+			fmt.Println("start partitioner")
 			go partitioner(t, cfg, ch_partitioner, &done_partitioner)
 		}
 		time.Sleep(5 * time.Second)
 
+		fmt.Println(11111111)
 		atomic.StoreInt32(&done_clients, 1)     // tell clients to quit
 		atomic.StoreInt32(&done_partitioner, 1) // tell partitioner to quit
 
 		if partitions {
+			fmt.Println("done partitioner")
 			// log.Printf("wait for partitioner\n")
 			<-ch_partitioner
 			// reconnect network and submit a request. A client may

@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 )
 
-const Debug = 0
+const Debug = 1
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
@@ -136,13 +136,13 @@ func (kv *KVServer) ApplyToKvDb(args Op) {
 	case "Put":
 		kv.db[args.Key] = args.Value
 		kv.ack[args.Id] = args.SeqId
-		DPrintf("Put ckId[%d] -- seqId[%d] -- key[%s] -- val[%s]", args.Id, args.SeqId, args.Key, kv.db[args.Key])
+		//DPrintf("Put ckId[%d] -- seqId[%d] -- key[%s] -- val[%s]", args.Id, args.SeqId, args.Key, kv.db[args.Key])
 	case "Append":
 		kv.db[args.Key] += args.Value
 		kv.ack[args.Id] = args.SeqId
-		DPrintf("Append ckId[%d] -- seqId[%d] -- key[%s] -- val[%s]", args.Id, args.SeqId, args.Key, kv.db[args.Key])
+		//DPrintf("Append ckId[%d] -- seqId[%d] -- key[%s] -- val[%s]", args.Id, args.SeqId, args.Key, kv.db[args.Key])
 	case "Get":
-		DPrintf("Get ckId[%d] -- seqId[%d] -- key[%s] -- val[%s]", args.Id, args.SeqId, args.Key, kv.db[args.Key])
+		//DPrintf("Get ckId[%d] -- seqId[%d] -- key[%s] -- val[%s]", args.Id, args.SeqId, args.Key, kv.db[args.Key])
 	}
 }
 
@@ -150,20 +150,15 @@ func (kv *KVServer) listenApplied() {
 	go func() {
 		for {
 			msg := <-kv.applyCh
+			DPrintf("applied -- [%+v]", msg)
 			op := msg.Command.(Op)
 			kv.mu.Lock()
 			if !kv.CheckDup(op.Id, op.SeqId) {
 				kv.ApplyToKvDb(op)
 			}
 
-			ch, ok := kv.commitCh[msg.CommandIndex]
-			if ok {
-				select {
-				case <-kv.commitCh[msg.CommandIndex]:
-				default:
-				}
-				ch <- op
-			}
+			ch, _ := kv.commitCh[msg.CommandIndex]
+			ch <- op
 			kv.mu.Unlock()
 		}
 	}()
