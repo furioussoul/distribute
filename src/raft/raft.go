@@ -263,7 +263,8 @@ func (rf *Raft) resetCommitIndex() {
 
 	//DPrintf("[%d],agreeIndex:[%d],commitIndex:[%d]", rf.me, agreeIndex, rf.commitIndex)
 	if rf.log[agreeIndex].Term == rf.currentTerm && agreeIndex > rf.commitIndex {
-		DPrintf("2B [%d] commit index:[%d] matchIndex:[%+v]\n", rf.me, agreeIndex, rf.matchIndex)
+
+		DPrintf("2B [%d] commit index:[%d] matchIndex1:[%+v]\n", rf.me, agreeIndex, rf.matchIndex)
 
 		if agreeIndex > rf.commitIndex {
 			for i := rf.commitIndex; i <= agreeIndex; i++ {
@@ -275,6 +276,7 @@ func (rf *Raft) resetCommitIndex() {
 						Command:      entry.Command,
 					}
 					rf.applyCh <- msg
+					DPrintf("2B -- [%d] -- applied -- [%+v]", rf.me, msg)
 				}
 			}
 		}

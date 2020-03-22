@@ -205,8 +205,6 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 			key := strconv.Itoa(cli)
 			Put(cfg, myck, key, last)
 			for atomic.LoadInt32(&done_clients) == 0 {
-				fmt.Println(33333333)
-
 				if (rand.Int() % 1000) < 500 {
 					nv := "x " + strconv.Itoa(cli) + " " + strconv.Itoa(j) + " y"
 					// log.Printf("%d: client new append %v\n", cli, nv)
@@ -221,7 +219,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 					}
 				}
 			}
-			fmt.Println(22222222)
+			fmt.Println("client quit")
 		})
 
 		if partitions {
@@ -232,7 +230,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 		}
 		time.Sleep(5 * time.Second)
 
-		fmt.Println(11111111)
+		fmt.Println("tell clients and partitioner to quit")
 		atomic.StoreInt32(&done_clients, 1)     // tell clients to quit
 		atomic.StoreInt32(&done_partitioner, 1) // tell partitioner to quit
 
@@ -245,6 +243,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 			// won't return until that server discovers a new term
 			// has started.
 			cfg.ConnectAll()
+
 			// wait for a while so that we have a new term
 			time.Sleep(electionTimeout)
 		}

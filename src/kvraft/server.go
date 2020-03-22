@@ -150,7 +150,7 @@ func (kv *KVServer) listenApplied() {
 	go func() {
 		for {
 			msg := <-kv.applyCh
-			DPrintf("applied -- [%+v]", msg)
+			DPrintf("3A -- applied -- [%+v]", msg)
 			op := msg.Command.(Op)
 			kv.mu.Lock()
 			if !kv.CheckDup(op.Id, op.SeqId) {

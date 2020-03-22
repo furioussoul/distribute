@@ -128,7 +128,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	for {
 		for i := range ck.servers {
 			ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
-			DPrintf("write -- args[%+v] -- val[%s] -- reply [%+v]", args, args.Value, reply)
+			DPrintf("WRITE -- args[%+v] -- val[%s] -- reply [%+v]", args, args.Value, reply)
 			if ok && reply.Err == OK {
 				DPrintf("leader [%d]", i)
 				return

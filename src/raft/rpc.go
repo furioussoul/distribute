@@ -204,7 +204,7 @@ func (rf *Raft) appendEmpty(i int) {
 			LeaderCommit: rf.commitIndex,
 		}
 
-		DPrintf("2B [%d] send AppendEmpty to [%d]", rf.me, j)
+		DPrintf("2B [%d] send AppendEmpty to [%d] -- matchIndex:[%+v]", rf.me, j, rf.matchIndex)
 
 		ok := rf.sendAppendEntries(j, &request, &reply)
 
