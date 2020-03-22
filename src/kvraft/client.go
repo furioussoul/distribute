@@ -89,10 +89,12 @@ func (ck *Clerk) Get(key string) string {
 
 	for {
 		for i := range ck.servers {
-			ok := ck.servers[i].Call("KVServer.Get", &args, &reply)
-			DPrintf("READ -- args[%+v] -- reply [%+v]", args, reply)
+
+			ok := ck.call(func() bool {
+				return ck.servers[i].Call("KVServer.Get", &args, &reply)
+			})
 			if ok && reply.Err == OK {
-				DPrintf("leader [%d]", i)
+				DPrintf("READ -- [%d] -- args[%+v] -- reply [%+v]", i, args, reply)
 				return reply.Value
 			}
 		}
@@ -127,14 +129,33 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 
 	for {
 		for i := range ck.servers {
-			ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
-			DPrintf("WRITE -- args[%+v] -- val[%s] -- reply [%+v]", args, args.Value, reply)
+
+			ok := ck.call(func() bool {
+				return ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
+			})
 			if ok && reply.Err == OK {
-				DPrintf("leader [%d]", i)
+				DPrintf("WRITE -- [%d] -- args[%+v] -- val[%s] -- reply [%+v]", i, args, args.Value, reply)
 				return
 			}
 		}
 		time.Sleep(100)
+	}
+}
+
+func (ck *Clerk) call(fn func() bool) bool {
+
+	ch := make(chan bool)
+
+	go func() {
+		ok := fn()
+		ch <- ok
+	}()
+
+	select {
+	case ok := <-ch:
+		return ok
+	case <-time.After(250 * time.Second):
+		return false
 	}
 }
 

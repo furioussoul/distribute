@@ -261,8 +261,10 @@ func (rf *Raft) resetCommitIndex() {
 		}
 	}
 
-	//DPrintf("[%d],agreeIndex:[%d],commitIndex:[%d]", rf.me, agreeIndex, rf.commitIndex)
-	if rf.log[agreeIndex].Term == rf.currentTerm && agreeIndex > rf.commitIndex {
+	DPrintf("[%d] -- agreeIndex:[%d][logTerm:%d] -- commitIndex:[%d][curTerm:%d]", rf.me, agreeIndex,
+		rf.log[agreeIndex].Term, rf.commitIndex, rf.currentTerm)
+
+	if agreeIndex > rf.commitIndex {
 
 		DPrintf("2B [%d] commit index:[%d] matchIndex1:[%+v]\n", rf.me, agreeIndex, rf.matchIndex)
 
@@ -279,6 +281,7 @@ func (rf *Raft) resetCommitIndex() {
 					DPrintf("2B -- [%d] -- applied -- [%+v]", rf.me, msg)
 				}
 			}
+
 		}
 
 		rf.commitIndex = agreeIndex

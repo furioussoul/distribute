@@ -907,6 +907,8 @@ func TestFigure8Unreliable2C(t *testing.T) {
 
 	a := rand.Int() % 10000
 
+	time.Sleep(30 * time.Second)
+
 	cfg.one(a, servers, true)
 
 	cfg.end()
