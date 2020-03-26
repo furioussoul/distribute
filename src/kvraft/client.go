@@ -154,7 +154,7 @@ func (ck *Clerk) call(fn func() bool) bool {
 	select {
 	case ok := <-ch:
 		return ok
-	case <-time.After(250 * time.Second):
+	case <-time.After(1000 * time.Second):
 		return false
 	}
 }
