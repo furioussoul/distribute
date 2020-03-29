@@ -90,7 +90,7 @@ func (ck *Clerk) Get(key string) string {
 	for {
 		for i := range ck.servers {
 
-			ok := ck.call(func() bool {
+			ok := ck.call(args, func() bool {
 				return ck.servers[i].Call("KVServer.Get", &args, &reply)
 			})
 			if ok && reply.Err == OK {
@@ -130,7 +130,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	for {
 		for i := range ck.servers {
 
-			ok := ck.call(func() bool {
+			ok := ck.call(args, func() bool {
 				return ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
 			})
 			if ok && reply.Err == OK {
@@ -142,7 +142,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	}
 }
 
-func (ck *Clerk) call(fn func() bool) bool {
+func (ck *Clerk) call(args interface{}, fn func() bool) bool {
 
 	ch := make(chan bool)
 
@@ -154,7 +154,8 @@ func (ck *Clerk) call(fn func() bool) bool {
 	select {
 	case ok := <-ch:
 		return ok
-	case <-time.After(1000 * time.Second):
+	case <-time.After(5 * time.Second):
+		DPrintf("timeout -- args[%+v]", args)
 		return false
 	}
 }

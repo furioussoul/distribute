@@ -126,7 +126,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Command: command,
 		}
 
-		DPrintf("leader [%d][term:%d] accept log [%+v]", rf.me, rf.currentTerm, entry)
+		fmt.Printf("leader [%d][term:%d] accept log [%+v]\n", rf.me, rf.currentTerm, entry)
 
 		index, term = rf.appendLogToLocal(entry)
 	}
@@ -175,7 +175,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 	rf.applyCh = applyCh
 	rf.heartBeatInterval = 40 * time.Millisecond
-	rf.electionTimeout = 200 * time.Millisecond
+	rf.electionTimeout = 1000 * time.Millisecond
 	rf.leaderId = -1
 	rf.commitIndex = 0
 	rf.lastApplied = 0
@@ -348,6 +348,10 @@ func (rf *Raft) transitionToFollower() {
 func (rf *Raft) calElectionTimeout() int64 {
 	n := rand.Int63n(rf.electionTimeout.Milliseconds()) + rf.electionTimeout.Milliseconds()
 	return n
+}
+
+func (rf *Raft) Me() int {
+	return rf.me
 }
 
 func (rf *Raft) setTerm(term int) {
