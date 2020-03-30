@@ -104,6 +104,10 @@ func (rf *Raft) sendAppendEntries(server int, args *RequestAppendEntries, reply 
 
 func (rf *Raft) vote() {
 
+	if rf.role != 2 {
+		return
+	}
+
 	DPrintf("2B [%d] start vote term[%d]", rf.me, rf.currentTerm)
 
 	rf.setTerm(rf.currentTerm + 1)

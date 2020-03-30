@@ -52,13 +52,12 @@ type ApplyMsg struct {
 // A Go object implementing a single Raft peer.
 //
 type Raft struct {
-	lock         sync.Mutex
-	persistLock  sync.Mutex
-	appenderLock sync.Mutex
-	peers        []*labrpc.ClientEnd // RPC end points of all peers
-	persister    *Persister          // Object to hold this peer's persisted state
-	me           int                 // this peer's index into peers[]
-	dead         int32               // set by Kill()
+	lock        sync.Mutex
+	persistLock sync.Mutex
+	peers       []*labrpc.ClientEnd // RPC end points of all peers
+	persister   *Persister          // Object to hold this peer's persisted state
+	me          int                 // this peer's index into peers[]
+	dead        int32               // set by Kill()
 
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
@@ -175,7 +174,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 	rf.applyCh = applyCh
 	rf.heartBeatInterval = 40 * time.Millisecond
-	rf.electionTimeout = 1000 * time.Millisecond
+	rf.electionTimeout = 250 * time.Millisecond
 	rf.leaderId = -1
 	rf.commitIndex = 0
 	rf.lastApplied = 0
@@ -268,20 +267,17 @@ func (rf *Raft) resetCommitIndex() {
 
 		DPrintf("2B [%d] commit index:[%d] matchIndex1:[%+v]\n", rf.me, agreeIndex, rf.matchIndex)
 
-		if agreeIndex > rf.commitIndex {
-			for i := rf.commitIndex; i <= agreeIndex; i++ {
-				entry := rf.log[i]
-				if i > 0 {
-					msg := ApplyMsg{
-						CommandValid: true,
-						CommandIndex: entry.Index,
-						Command:      entry.Command,
-					}
-					rf.applyCh <- msg
-					DPrintf("2B -- [%d] -- applied -- [%+v]", rf.me, msg)
+		for i := rf.commitIndex + 1; i <= agreeIndex; i++ {
+			entry := rf.log[i]
+			if i > 0 {
+				msg := ApplyMsg{
+					CommandValid: true,
+					CommandIndex: entry.Index,
+					Command:      entry.Command,
 				}
+				DPrintf("2B -- [%d] -- applied -- [%+v]", rf.me, msg)
+				rf.applyCh <- msg
 			}
-
 		}
 
 		rf.commitIndex = agreeIndex
@@ -385,9 +381,6 @@ func (rf *Raft) setLastVoteFor(candidate int) error {
 }
 
 func (rf *Raft) appendLogToLocal(entry LogEntry) (index int, term int) {
-
-	rf.appenderLock.Lock()
-	defer rf.appenderLock.Unlock()
 
 	if entry.Index <= len(rf.log)-1 {
 		if rf.log[entry.Index].Term != entry.Term {

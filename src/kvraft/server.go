@@ -7,6 +7,7 @@ import (
 	"log"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 const Debug = 1
@@ -51,18 +52,26 @@ func (kv *KVServer) commitEntryLog(entry Op) Err {
 		return ErrWrongLeader
 	}
 
+	//todo 假leader
+	kv.mu.Lock()
 	ch, ok := kv.commitCh[index]
 	if !ok {
 		ch = make(chan Op, 1)
 		kv.commitCh[index] = ch
 	}
+	kv.mu.Unlock()
 
 	select {
 	case op := <-ch:
 		if op != entry {
 			return ErrUnexpected
 		}
+	case <-time.After(5 * time.Second):
+		log.Println("timeout2")
+		return ErrWrongLeader
 	}
+
+	delete(kv.commitCh, index)
 
 	return OK
 }
@@ -152,14 +161,19 @@ func (kv *KVServer) listenApplied() {
 			msg := <-kv.applyCh
 			DPrintf("3A -- applied -- [%+v]", msg)
 			op := msg.Command.(Op)
-			kv.mu.Lock()
+
 			if !kv.CheckDup(op.Id, op.SeqId) {
 				kv.ApplyToKvDb(op)
+				kv.mu.Lock()
+				ch, ok := kv.commitCh[msg.CommandIndex]
+				if !ok {
+					ch = make(chan Op, 1)
+					kv.commitCh[msg.CommandIndex] = ch
+				}
+				ch <- op
+				kv.mu.Unlock()
 			}
 
-			ch, _ := kv.commitCh[msg.CommandIndex]
-			ch <- op
-			kv.mu.Unlock()
 		}
 	}()
 }
@@ -189,7 +203,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	// You may need initialization code here.
 
-	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.applyCh = make(chan raft.ApplyMsg, 1)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.

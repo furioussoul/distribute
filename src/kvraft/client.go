@@ -11,9 +11,10 @@ import (
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
-	id    int
-	seqId int
-	mu    sync.Mutex
+	id     int
+	seqId  int
+	mu     sync.Mutex
+	leader int
 }
 
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
@@ -23,6 +24,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck.id = generateRandomNumber(10, 1000000, 1)[0]
 	fmt.Println(ck.id)
 	ck.seqId = 0
+	ck.leader = -1
 	return ck
 }
 
@@ -88,12 +90,24 @@ func (ck *Clerk) Get(key string) string {
 	ck.seqId++
 
 	for {
+
+		if ck.leader != -1 {
+			ok := ck.call(args, func() bool {
+				return ck.servers[ck.leader].Call("KVServer.Get", &args, &reply)
+			})
+			if ok && reply.Err == OK {
+				DPrintf("READ -- [%d] -- args[%+v] -- reply [%+v]", ck.leader, args, reply)
+				return reply.Value
+			}
+		}
+
 		for i := range ck.servers {
 
 			ok := ck.call(args, func() bool {
 				return ck.servers[i].Call("KVServer.Get", &args, &reply)
 			})
 			if ok && reply.Err == OK {
+				ck.leader = i
 				DPrintf("READ -- [%d] -- args[%+v] -- reply [%+v]", i, args, reply)
 				return reply.Value
 			}
@@ -128,12 +142,24 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	ck.seqId++
 
 	for {
+
+		if ck.leader != -1 {
+			ok := ck.call(args, func() bool {
+				return ck.servers[ck.leader].Call("KVServer.PutAppend", &args, &reply)
+			})
+			if ok && reply.Err == OK {
+				DPrintf("WRITE -- [%d] -- args[%+v] -- val[%s] -- reply [%+v]", ck.leader, args, args.Value, reply)
+				return
+			}
+		}
+
 		for i := range ck.servers {
 
 			ok := ck.call(args, func() bool {
 				return ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
 			})
 			if ok && reply.Err == OK {
+				ck.leader = i
 				DPrintf("WRITE -- [%d] -- args[%+v] -- val[%s] -- reply [%+v]", i, args, args.Value, reply)
 				return
 			}
@@ -154,7 +180,7 @@ func (ck *Clerk) call(args interface{}, fn func() bool) bool {
 	select {
 	case ok := <-ch:
 		return ok
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		DPrintf("timeout -- args[%+v]", args)
 		return false
 	}
