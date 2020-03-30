@@ -52,7 +52,6 @@ func (kv *KVServer) commitEntryLog(entry Op) Err {
 		return ErrWrongLeader
 	}
 
-	//todo 假leader
 	kv.mu.Lock()
 	ch, ok := kv.commitCh[index]
 	if !ok {
@@ -66,7 +65,8 @@ func (kv *KVServer) commitEntryLog(entry Op) Err {
 		if op != entry {
 			return ErrUnexpected
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
+		//fake leader
 		log.Println("timeout2")
 		return ErrWrongLeader
 	}
