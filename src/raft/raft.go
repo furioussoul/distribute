@@ -52,12 +52,13 @@ type ApplyMsg struct {
 // A Go object implementing a single Raft peer.
 //
 type Raft struct {
-	lock        sync.Mutex
-	persistLock sync.Mutex
-	peers       []*labrpc.ClientEnd // RPC end points of all peers
-	persister   *Persister          // Object to hold this peer's persisted state
-	me          int                 // this peer's index into peers[]
-	dead        int32               // set by Kill()
+	lock         sync.Mutex
+	persistLock  sync.Mutex
+	appenderLock sync.Mutex
+	peers        []*labrpc.ClientEnd // RPC end points of all peers
+	persister    *Persister          // Object to hold this peer's persisted state
+	me           int                 // this peer's index into peers[]
+	dead         int32               // set by Kill()
 
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
@@ -67,15 +68,13 @@ type Raft struct {
 	votedFor    int
 
 	leaderId int
-	role     int //1 follower; 2 candidate; 3 leader;
+	role     Role //1 follower; 2 candidate; 3 leader;
 
 	hb func()
 
 	electionTimeout   time.Duration
 	heartBeatInterval time.Duration
-	timer             *time.Timer
 	voteTimeoutTicker *time.Ticker
-	ticker            *time.Ticker
 
 	log         []LogEntry
 	commitIndex int
@@ -85,12 +84,31 @@ type Raft struct {
 	nextIndex       []int
 	matchIndex      []int
 	applyCh         chan ApplyMsg
+
+	voteCh      chan bool
+	appendLogCh chan bool
 }
 
 type LogEntry struct {
 	Term    int
 	Index   int
 	Command interface{}
+}
+
+type Role int
+
+const (
+	Follower  Role = iota
+	Candidate Role = iota
+	Leader    Role = iota
+)
+
+func (rf *Raft) sendToCh(ch chan bool) {
+	select {
+	case <-ch:
+	default:
+	}
+	ch <- true
 }
 
 //
@@ -125,7 +143,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Command: command,
 		}
 
-		fmt.Printf("leader [%d][term:%d] accept log [%+v]\n", rf.me, rf.currentTerm, entry)
+		DPrintf("leader [%d][term:%d] accept log [%+v]\n", rf.me, rf.currentTerm, entry)
 
 		index, term = rf.appendLogToLocal(entry)
 	}
@@ -184,39 +202,35 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	for i := range peers {
 		rf.memberAppending[i] = 0
 	}
+	rf.voteCh = make(chan bool, 1)
+	rf.appendLogCh = make(chan bool, 1)
+	rf.role = Follower
 	rf.currentTerm = 0
 	rf.votedFor = -1
 	rf.log = []LogEntry{{0, 0, nil}}
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
-	rf.transitionToFollower()
+
+	go func() {
+		for {
+			switch rf.role {
+			case Follower, Candidate:
+				select {
+				case <-rf.voteCh:
+				case <-rf.appendLogCh:
+				case <-time.After(time.Duration(rf.calElectionTimeout()) * time.Millisecond):
+					rf.transitionToCandidate()
+				}
+			case Leader:
+				rf.leaderHb()
+				time.Sleep(rf.heartBeatInterval)
+			}
+		}
+	}()
 
 	//DPrintf("[%d] start term:[%d] voteFor:[%d] log:[%+v]\n", rf.me, rf.currentTerm, rf.votedFor, rf.log)
 
 	return rf
-}
-
-// invoke rf.hb() when timeout
-func (rf *Raft) timeout(cb func()) {
-
-	if rf.timer != nil {
-		rf.timer.Stop()
-	}
-	rf.timer = time.NewTimer(time.Duration(rf.calElectionTimeout()) * time.Millisecond)
-	select {
-	case <-rf.timer.C:
-		cb()
-	}
-}
-
-func (rf *Raft) heartbeat(cb func()) {
-	rf.ticker = time.NewTicker(rf.heartBeatInterval)
-	for {
-		select {
-		case <-rf.ticker.C:
-			cb()
-		}
-	}
 }
 
 func (rf *Raft) leaderHb() {
@@ -260,22 +274,18 @@ func (rf *Raft) resetCommitIndex() {
 		}
 	}
 
-	DPrintf("[%d] -- agreeIndex:[%d][logTerm:%d] -- commitIndex:[%d][curTerm:%d]", rf.me, agreeIndex,
-		rf.log[agreeIndex].Term, rf.commitIndex, rf.currentTerm)
+	//DPrintf("[%d],agreeIndex:[%d],commitIndex:[%d]", rf.me, agreeIndex, rf.commitIndex)
+	if rf.log[agreeIndex].Term == rf.currentTerm && agreeIndex > rf.commitIndex {
+		DPrintf("[%d] commit index:[%d] matchIndex:[%+v]\n", rf.me, agreeIndex, rf.matchIndex)
 
-	if agreeIndex > rf.commitIndex {
-
-		DPrintf("2B [%d] commit index:[%d] matchIndex1:[%+v]\n", rf.me, agreeIndex, rf.matchIndex)
-
-		for i := rf.commitIndex + 1; i <= agreeIndex; i++ {
-			entry := rf.log[i]
-			if i > 0 {
+		if agreeIndex > rf.commitIndex {
+			for i := rf.commitIndex + 1; i <= agreeIndex; i++ {
+				entry := rf.log[i]
 				msg := ApplyMsg{
 					CommandValid: true,
 					CommandIndex: entry.Index,
 					Command:      entry.Command,
 				}
-				DPrintf("2B -- [%d] -- applied -- [%+v]", rf.me, msg)
 				rf.applyCh <- msg
 			}
 		}
@@ -285,60 +295,31 @@ func (rf *Raft) resetCommitIndex() {
 }
 
 func (rf *Raft) transitionToLeader() {
-
-	if rf.ticker != nil {
-		rf.ticker.Stop()
-	}
-	if rf.timer != nil {
-		rf.timer.Stop()
-	}
-	if rf.voteTimeoutTicker != nil {
-		rf.voteTimeoutTicker.Stop()
-	}
-
-	DPrintf("[%d] election #win transition to leader [term:%d]\n", rf.me, rf.currentTerm)
-
-	rf.role = 3
+	rf.role = Leader
 	rf.leaderId = rf.me
 	l := len(rf.nextIndex)
 	for i := 0; i < l; i++ {
 		rf.nextIndex[i] = len(rf.log)
 		rf.matchIndex[i] = 0
 	}
-	go rf.heartbeat(rf.leaderHb)
+	DPrintf("[%d] election #win transition to leader [term:%d]\n", rf.me, rf.currentTerm)
 }
 
 func (rf *Raft) transitionToCandidate() {
-
-	if rf.ticker != nil {
-		rf.ticker.Stop()
-	}
-	if rf.timer != nil {
-		rf.timer.Stop()
+	rf.role = Candidate
+	rf.setTerm(rf.currentTerm + 1)
+	if err := rf.setLastVoteFor(rf.me); err != nil {
+		return
 	}
 
-	rf.role = 2
-	DPrintf("2B [%v] transitionToCandidate update term from [%d] to [%d]\n", rf.me, rf.currentTerm, rf.currentTerm+1)
-
-	go rf.timeout(rf.vote)
+	go rf.vote()
+	DPrintf("2B [%v] transitionToCandidate -- term -- [%d]\n", rf.me, rf.currentTerm)
 }
 
 func (rf *Raft) transitionToFollower() {
-
-	if rf.ticker != nil {
-		rf.ticker.Stop()
-	}
-	if rf.timer != nil {
-		rf.timer.Stop()
-	}
-	if rf.voteTimeoutTicker != nil {
-		rf.voteTimeoutTicker.Stop()
-	}
-
-	rf.role = 1
+	rf.role = Follower
+	rf.votedFor = -1
 	DPrintf("2B [%d] transition to follower [term:%d]\n", rf.me, rf.currentTerm)
-
-	go rf.timeout(rf.transitionToCandidate)
 }
 
 func (rf *Raft) calElectionTimeout() int64 {

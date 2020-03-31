@@ -104,17 +104,6 @@ func (rf *Raft) sendAppendEntries(server int, args *RequestAppendEntries, reply 
 
 func (rf *Raft) vote() {
 
-	if rf.role != 2 {
-		return
-	}
-
-	DPrintf("2B [%d] start vote term[%d]", rf.me, rf.currentTerm)
-
-	rf.setTerm(rf.currentTerm + 1)
-	if err := rf.setLastVoteFor(rf.me); err != nil {
-		return
-	}
-
 	var cancelQuorum int32
 
 	quorum := makeQuorum(len(rf.peers)/2+1, func(elected bool) {
@@ -125,23 +114,9 @@ func (rf *Raft) vote() {
 
 		if elected {
 			rf.transitionToLeader()
-		} else {
-			rf.transitionToFollower()
+			rf.sendToCh(rf.voteCh)
 		}
 	})
-
-	rf.voteTimeoutTicker = time.NewTicker(time.Duration(1000) * time.Millisecond)
-
-	go func() {
-		select {
-		case <-rf.voteTimeoutTicker.C:
-			if !atomic.CompareAndSwapInt32(&cancelQuorum, 0, 1) {
-				return
-			}
-			DPrintf("2B [%d] vote timeout restart vote", rf.me)
-			rf.vote()
-		}
-	}()
 
 	for i := range rf.peers {
 
@@ -161,7 +136,7 @@ func (rf *Raft) vote() {
 
 			ok := rf.sendRequestVote(j, &args, &reply)
 
-			if !ok || rf.role != 2 || args.Term != rf.currentTerm {
+			if !ok || rf.role != Candidate || args.Term != rf.currentTerm {
 				return
 			}
 
@@ -170,6 +145,7 @@ func (rf *Raft) vote() {
 				atomic.CompareAndSwapInt32(&cancelQuorum, 0, 1)
 				rf.setTerm(reply.Term)
 				rf.transitionToFollower()
+				rf.sendToCh(rf.voteCh)
 			} else if !reply.VoteGranted {
 				DPrintf("2B [%d] vote fail1 from [%d]", rf.me, j)
 				quorum.fail()
@@ -304,38 +280,39 @@ func (rf *Raft) appendLogEntry(i int) {
 
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
-	DPrintf("2B [%d] accept RequestVote from [%d] , args:[%+v]", rf.me, args.CandidateId, args)
-
-	if args.Term < rf.currentTerm {
-
-		reply.Term = rf.currentTerm
-		reply.VoteGranted = false
-
-		return
-	}
-
 	if args.Term > rf.currentTerm {
-
 		rf.setTerm(args.Term)
 		rf.transitionToFollower()
+		rf.sendToCh(rf.voteCh)
 	}
 
-	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && rf.logNewer(args) {
+	success := false
 
-		if err := rf.setLastVoteFor(args.CandidateId); err != nil {
-			reply.Term = rf.currentTerm
-			reply.VoteGranted = false
-			return
-		}
-
-		reply.Term = rf.currentTerm
-		reply.VoteGranted = true
-
+	if args.Term < rf.currentTerm {
+		//false
+	} else if rf.votedFor != -1 && rf.votedFor != args.CandidateId {
+		//false
+	} else if args.LastLogTerm < rf.log[len(rf.log)-1].Term {
+		//false
+	} else if args.LastLogTerm == rf.log[len(rf.log)-1].Term && args.LastLogIndex < len(rf.log)-1 {
+		//false
 	} else {
-		reply.Term = rf.currentTerm
-		reply.VoteGranted = false
-
+		rf.setLastVoteFor(args.CandidateId)
+		success = true
+		rf.transitionToFollower()
+		rf.sendToCh(rf.voteCh)
 	}
+
+	reply.Term = rf.currentTerm
+	reply.VoteGranted = success
+
+	ack := "reject"
+	if success {
+		ack = "accept"
+	}
+
+	DPrintf("2B [%d] -- [%v] -- [%d]'s RequestVote", rf.me, ack, args.CandidateId)
+
 }
 
 func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntries) {
@@ -424,19 +401,4 @@ func (rf *Raft) commit(args *RequestAppendEntries) {
 			}
 		}
 	}
-}
-
-func (rf *Raft) logNewer(args *RequestVoteArgs) bool {
-
-	flag := false
-
-	if args.LastLogTerm > rf.log[len(rf.log)-1].Term {
-		flag = true
-	} else if args.LastLogTerm == rf.log[len(rf.log)-1].Term && args.LastLogIndex >= len(rf.log)-1 {
-		flag = true
-	} else {
-		flag = false
-	}
-
-	return flag
 }
