@@ -47,33 +47,51 @@ type KVServer struct {
 
 func (kv *KVServer) commitEntryLog(entry Op) Err {
 
+	originOp := Op{
+		Type:  entry.Type,
+		Key:   entry.Key,
+		Value: entry.Value,
+	}
+	_, isLeader := kv.rf.GetState()
+	if !isLeader {
+		return ErrWrongLeader
+	}
+
 	index, _, isLeader := kv.rf.Start(entry)
 	if !isLeader {
 		return ErrWrongLeader
 	}
 
-	kv.mu.Lock()
-	ch, ok := kv.commitCh[index]
-	if !ok {
-		ch = make(chan Op, 1)
-		kv.commitCh[index] = ch
-	}
-	kv.mu.Unlock()
+	ch := kv.putIfAbsent(index)
+	op := notified(ch)
 
-	select {
-	case op := <-ch:
-		if op != entry {
-			return ErrUnexpected
-		}
-	case <-time.After(10 * time.Second):
-		//fake leader
-		log.Println("timeout2")
+	if equalOp(originOp, op) {
+		return OK
+	} else {
 		return ErrWrongLeader
 	}
+}
 
-	delete(kv.commitCh, index)
+func equalOp(a Op, b Op) bool {
+	return a.Key == b.Key && a.Value == b.Value && a.Type == b.Type
+}
 
-	return OK
+func notified(ch chan Op) Op {
+	select {
+	case op := <-ch:
+		return op
+	case <-time.After(1 * time.Second):
+		return Op{}
+	}
+}
+
+func (kv *KVServer) putIfAbsent(idx int) chan Op {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	if _, ok := kv.commitCh[idx]; !ok {
+		kv.commitCh[idx] = make(chan Op, 1)
+	}
+	return kv.commitCh[idx]
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
@@ -157,23 +175,17 @@ func (kv *KVServer) ApplyToKvDb(args Op) {
 
 func (kv *KVServer) listenApplied() {
 	go func() {
-		for {
-			msg := <-kv.applyCh
-			DPrintf("3A -- applied -- [%+v]", msg)
+		for msg := range kv.applyCh {
+
 			op := msg.Command.(Op)
 
 			if !kv.CheckDup(op.Id, op.SeqId) {
 				kv.ApplyToKvDb(op)
-				kv.mu.Lock()
-				ch, ok := kv.commitCh[msg.CommandIndex]
-				if !ok {
-					ch = make(chan Op, 1)
-					kv.commitCh[msg.CommandIndex] = ch
-				}
-				ch <- op
-				kv.mu.Unlock()
 			}
 
+			ch := kv.putIfAbsent(msg.CommandIndex)
+			ch <- op
+			DPrintf("3A -- [%d] -- applied -- [%+v]", kv.rf.Me(), msg)
 		}
 	}()
 }

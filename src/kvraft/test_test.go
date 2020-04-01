@@ -141,12 +141,6 @@ func partitioner(t *testing.T, cfg *config, ch chan bool, done *int32) {
 		cfg.partition(pa[0], pa[1])
 		time.Sleep(electionTimeout + time.Duration(rand.Int63()%200)*time.Millisecond)
 	}
-
-	for i := 0; i < cfg.n; i++ {
-		a[i] = i
-	}
-
-	cfg.partition(a, make([]int, 0))
 }
 
 // Basic test is as follows: one or more clients submitting Append/Get

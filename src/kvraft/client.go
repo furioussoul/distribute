@@ -95,6 +95,7 @@ func (ck *Clerk) Get(key string) string {
 			ok := ck.call(args, func() bool {
 				return ck.servers[ck.leader].Call("KVServer.Get", &args, &reply)
 			})
+
 			if ok && reply.Err == OK {
 				DPrintf("READ -- [%d] -- args[%+v] -- reply [%+v]", ck.leader, args, reply)
 				return reply.Value
@@ -106,6 +107,7 @@ func (ck *Clerk) Get(key string) string {
 			ok := ck.call(args, func() bool {
 				return ck.servers[i].Call("KVServer.Get", &args, &reply)
 			})
+
 			if ok && reply.Err == OK {
 				ck.leader = i
 				DPrintf("READ -- [%d] -- args[%+v] -- reply [%+v]", i, args, reply)
@@ -159,8 +161,8 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 				return ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
 			})
 			if ok && reply.Err == OK {
-				ck.leader = i
 				DPrintf("WRITE -- [%d] -- args[%+v] -- val[%s] -- reply [%+v]", i, args, args.Value, reply)
+				ck.leader = i
 				return
 			}
 		}
@@ -180,8 +182,8 @@ func (ck *Clerk) call(args interface{}, fn func() bool) bool {
 	select {
 	case ok := <-ch:
 		return ok
-	case <-time.After(10 * time.Second):
-		DPrintf("timeout -- args[%+v]", args)
+	case <-time.After(1 * time.Second):
+		DPrintf("client timeout -- args[%+v]", args)
 		return false
 	}
 }
