@@ -76,9 +76,12 @@ func (ps *Persister) SnapshotSize() int {
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
 	var term int
 	var isleader bool
-	// Your code here (2A).
+
 	term = rf.currentTerm
 	isleader = rf.me == rf.leaderId
 

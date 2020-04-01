@@ -103,7 +103,10 @@ func (rf *Raft) sendAppendEntries(server int, args *RequestAppendEntries, reply 
 }
 
 func (rf *Raft) vote() {
-
+	if err := rf.setLastVoteFor(rf.me); err != nil {
+		rf.mu.Unlock()
+		return
+	}
 	var cancelQuorum int32
 
 	quorum := makeQuorum(len(rf.peers)/2+1, func(elected bool) {
@@ -114,7 +117,6 @@ func (rf *Raft) vote() {
 
 		if elected {
 			rf.transitionToLeader()
-			rf.sendToCh(rf.voteCh)
 		}
 	})
 
@@ -136,20 +138,25 @@ func (rf *Raft) vote() {
 
 			ok := rf.sendRequestVote(j, &args, &reply)
 
-			if !ok || rf.role != Candidate || args.Term != rf.currentTerm {
+			rf.mu.Lock()
+			defer rf.mu.Unlock()
+
+			currentTerm := rf.currentTerm
+			role := rf.role
+
+			if !ok || role != Candidate || args.Term != currentTerm {
 				return
 			}
 
-			if reply.Term > rf.currentTerm {
+			if reply.Term > currentTerm {
 				DPrintf("2B Received greater term from [%d]", j)
 				atomic.CompareAndSwapInt32(&cancelQuorum, 0, 1)
 				rf.setTerm(reply.Term)
 				rf.transitionToFollower()
-				rf.sendToCh(rf.voteCh)
 			} else if !reply.VoteGranted {
 				DPrintf("2B [%d] vote fail1 from [%d]", rf.me, j)
 				quorum.fail()
-			} else if rf.currentTerm != reply.Term {
+			} else if currentTerm != reply.Term {
 				DPrintf("2B [%d] vote fail2 from [%d]", rf.me, j)
 				quorum.fail()
 			} else {
@@ -188,7 +195,10 @@ func (rf *Raft) appendEmpty(i int) {
 
 		ok := rf.sendAppendEntries(j, &request, &reply)
 
-		if !ok || request.Term != rf.currentTerm || rf.role != 3 {
+		rf.mu.Lock()
+		defer rf.mu.Unlock()
+
+		if !ok || request.Term != rf.currentTerm || rf.role != Leader {
 			return
 		}
 
@@ -204,6 +214,10 @@ func (rf *Raft) appendEmpty(i int) {
 func (rf *Raft) appendLogEntry(i int) {
 
 	go func(j int) {
+
+		if rf.role != Leader {
+			return
+		}
 
 		prevIndex := rf.nextIndex[j] - 1
 		logIndex := rf.nextIndex[j]
@@ -228,7 +242,10 @@ func (rf *Raft) appendLogEntry(i int) {
 
 		ok := rf.sendAppendEntries(j, &request, &reply)
 
-		if !ok || request.Term != rf.currentTerm || rf.role != 3 {
+		rf.mu.Lock()
+		defer rf.mu.Unlock()
+
+		if !ok || request.Term != rf.currentTerm || rf.role != Leader {
 			rf.memberAppending[j] = 0
 			return
 		}
@@ -250,7 +267,7 @@ func (rf *Raft) appendLogEntry(i int) {
 
 			//DPrintf("[%d]-[%+v]", rf.me, rf.log)
 
-			if reply.ConflictTerm == -1 {
+			if reply.ConflictTerm == NULL {
 
 				rf.nextIndex[j] = reply.ConflictIndex
 
@@ -280,17 +297,21 @@ func (rf *Raft) appendLogEntry(i int) {
 
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
 	if args.Term > rf.currentTerm {
 		rf.setTerm(args.Term)
 		rf.transitionToFollower()
-		rf.sendToCh(rf.voteCh)
 	}
 
 	success := false
 
+	voteFor := rf.votedFor
+
 	if args.Term < rf.currentTerm {
 		//false
-	} else if rf.votedFor != -1 && rf.votedFor != args.CandidateId {
+	} else if voteFor != NULL && voteFor != args.CandidateId {
 		//false
 	} else if args.LastLogTerm < rf.log[len(rf.log)-1].Term {
 		//false
@@ -300,7 +321,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.setLastVoteFor(args.CandidateId)
 		success = true
 		rf.transitionToFollower()
-		rf.sendToCh(rf.voteCh)
 	}
 
 	reply.Term = rf.currentTerm
@@ -317,19 +337,15 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntries) {
 
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
 	reply.Term = rf.currentTerm
 
 	if args.Term < rf.currentTerm {
-
 		reply.Success = false
-
 		return
 	}
-
-	/*if rf.currentTerm != args.Term {
-		DPrintf("[%d] AppendEntries update term from [%d] to [%d]; leader from [%d] to [%d]\n",
-			rf.me, rf.currentTerm, args.Term, rf.leaderId, args.LeaderId)
-	}*/
 
 	if args.Term > rf.currentTerm {
 		rf.setTerm(args.Term)
@@ -346,15 +362,11 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 		rf.commit(args)
 		rf.transitionToFollower()
 
-		return
-
-	}
-
-	if args.PrevLogIndex > len(rf.log)-1 {
+	} else if args.PrevLogIndex > len(rf.log)-1 {
 
 		reply.Success = false
 		reply.ConflictIndex = len(rf.log)
-		reply.ConflictTerm = -1
+		reply.ConflictTerm = NULL
 
 	} else {
 
@@ -380,6 +392,7 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 	}
 
 	rf.transitionToFollower()
+	rf.sendToCh(rf.appendLogCh)
 }
 
 func (rf *Raft) commit(args *RequestAppendEntries) {

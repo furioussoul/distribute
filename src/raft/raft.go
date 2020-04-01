@@ -52,6 +52,7 @@ type ApplyMsg struct {
 // A Go object implementing a single Raft peer.
 //
 type Raft struct {
+	mu           sync.Mutex
 	lock         sync.Mutex
 	persistLock  sync.Mutex
 	appenderLock sync.Mutex
@@ -95,6 +96,10 @@ type LogEntry struct {
 	Command interface{}
 }
 
+const (
+	NULL int = -1
+)
+
 type Role int
 
 const (
@@ -127,28 +132,28 @@ func (rf *Raft) sendToCh(ch chan bool) {
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
-	rf.lock.Lock()
-	defer rf.lock.Unlock()
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
-	index := -1
-	term := -1
+	currentTerm := rf.currentTerm
 	isLeader := rf.me == rf.leaderId
+	index := len(rf.log)
 
 	// Your code here (2B).
 	if isLeader {
 
 		entry := LogEntry{
-			Term:    rf.currentTerm,
-			Index:   len(rf.log),
+			Term:    currentTerm,
+			Index:   index,
 			Command: command,
 		}
 
-		DPrintf("leader [%d][term:%d] accept log [%+v]\n", rf.me, rf.currentTerm, entry)
+		DPrintf("leader [%d][term:%d] accept log [%+v]\n", rf.me, currentTerm, entry)
 
-		index, term = rf.appendLogToLocal(entry)
+		_, _ = rf.appendLogToLocal(entry)
 	}
 
-	return index, term, isLeader
+	return index, currentTerm, isLeader
 }
 
 //
@@ -193,7 +198,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.applyCh = applyCh
 	rf.heartBeatInterval = 40 * time.Millisecond
 	rf.electionTimeout = 250 * time.Millisecond
-	rf.leaderId = -1
+	rf.leaderId = NULL
 	rf.commitIndex = 0
 	rf.lastApplied = 0
 	rf.nextIndex = make([]int, len(peers))
@@ -206,20 +211,27 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.appendLogCh = make(chan bool, 1)
 	rf.role = Follower
 	rf.currentTerm = 0
-	rf.votedFor = -1
+	rf.votedFor = NULL
 	rf.log = []LogEntry{{0, 0, nil}}
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
 	go func() {
 		for {
-			switch rf.role {
+
+			rf.mu.Lock()
+			role := rf.role
+			rf.mu.Unlock()
+
+			switch role {
 			case Follower, Candidate:
 				select {
 				case <-rf.voteCh:
 				case <-rf.appendLogCh:
 				case <-time.After(time.Duration(rf.calElectionTimeout()) * time.Millisecond):
+					rf.mu.Lock()
 					rf.transitionToCandidate()
+					rf.mu.Unlock()
 				}
 			case Leader:
 				rf.leaderHb()
@@ -240,6 +252,9 @@ func (rf *Raft) leaderHb() {
 
 //只commit当前term的日志,figure8描述了之前term的on major的log也会被覆盖
 func (rf *Raft) resetCommitIndex() {
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
 	ids := make([]int, 0)
 
@@ -295,6 +310,7 @@ func (rf *Raft) resetCommitIndex() {
 }
 
 func (rf *Raft) transitionToLeader() {
+
 	rf.role = Leader
 	rf.leaderId = rf.me
 	l := len(rf.nextIndex)
@@ -302,23 +318,24 @@ func (rf *Raft) transitionToLeader() {
 		rf.nextIndex[i] = len(rf.log)
 		rf.matchIndex[i] = 0
 	}
+	rf.sendToCh(rf.voteCh)
 	DPrintf("[%d] election #win transition to leader [term:%d]\n", rf.me, rf.currentTerm)
 }
 
 func (rf *Raft) transitionToCandidate() {
+
 	rf.role = Candidate
 	rf.setTerm(rf.currentTerm + 1)
-	if err := rf.setLastVoteFor(rf.me); err != nil {
-		return
-	}
 
 	go rf.vote()
+
 	DPrintf("2B [%v] transitionToCandidate -- term -- [%d]\n", rf.me, rf.currentTerm)
 }
 
 func (rf *Raft) transitionToFollower() {
 	rf.role = Follower
-	rf.votedFor = -1
+	rf.votedFor = NULL
+	rf.sendToCh(rf.voteCh)
 	DPrintf("2B [%d] transition to follower [term:%d]\n", rf.me, rf.currentTerm)
 }
 
@@ -334,8 +351,8 @@ func (rf *Raft) Me() int {
 func (rf *Raft) setTerm(term int) {
 	if term > rf.currentTerm {
 		rf.currentTerm = term
-		rf.leaderId = -1
-		rf.votedFor = -1
+		rf.leaderId = NULL
+		rf.votedFor = NULL
 		rf.persist()
 		DPrintf("2B [%d] Set term [%d]", rf.me, term)
 	}
@@ -343,19 +360,20 @@ func (rf *Raft) setTerm(term int) {
 
 func (rf *Raft) setLastVoteFor(candidate int) error {
 
-	if rf.votedFor != -1 && candidate != -1 {
+	if rf.votedFor != NULL && candidate != NULL {
 		errMsg := fmt.Sprintf("[%d] Already voted for another candidate", rf.me)
 		DPrintf(errMsg)
 		return errors.New(errMsg)
 	}
 
 	rf.votedFor = candidate
+
 	rf.persist()
 
-	if candidate != -1 {
+	if candidate != NULL {
 		DPrintf("2B [%d] vote for [%d]", rf.me, candidate)
 	} else {
-		DPrintf("2B [%d] reset lastVoteFor = -1", rf.me)
+		DPrintf("2B [%d] reset lastVoteFor = NULL", rf.me)
 	}
 
 	return nil
