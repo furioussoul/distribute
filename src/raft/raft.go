@@ -19,7 +19,6 @@ package raft
 
 import (
 	"bytes"
-	"fmt"
 	"math/rand"
 	"sort"
 	"sync"
@@ -142,7 +141,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Command: command,
 		}
 
-		fmt.Printf("leader [%d][term:%d] accept log [%+v]\n", rf.me, term, entry)
+		DPrintf("leader [%d][term:%d] accept log [%+v]\n", rf.me, term, entry)
 
 		rf.log = append(rf.log, entry)
 		rf.persist()
@@ -337,7 +336,7 @@ func (rf *Raft) transitionToLeader() {
 		rf.nextIndex[i] = len(rf.log)
 		rf.matchIndex[i] = 0
 	}
-	fmt.Printf("[%d] election #win transition to leader [term:%d]\n", rf.me, rf.currentTerm)
+	DPrintf("[%d] election #win transition to leader [term:%d]\n", rf.me, rf.currentTerm)
 }
 
 func (rf *Raft) transitionToCandidate() {
