@@ -52,14 +52,12 @@ type ApplyMsg struct {
 // A Go object implementing a single Raft peer.
 //
 type Raft struct {
-	mu           sync.Mutex
-	lock         sync.Mutex
-	persistLock  sync.Mutex
-	appenderLock sync.Mutex
-	peers        []*labrpc.ClientEnd // RPC end points of all peers
-	persister    *Persister          // Object to hold this peer's persisted state
-	me           int                 // this peer's index into peers[]
-	dead         int32               // set by Kill()
+	mu          sync.Mutex
+	persistLock sync.Mutex
+	peers       []*labrpc.ClientEnd // RPC end points of all peers
+	persister   *Persister          // Object to hold this peer's persisted state
+	me          int                 // this peer's index into peers[]
+	dead        int32               // set by Kill()
 
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
@@ -71,20 +69,16 @@ type Raft struct {
 	leaderId int
 	role     Role //1 follower; 2 candidate; 3 leader;
 
-	hb func()
-
 	electionTimeout   time.Duration
 	heartBeatInterval time.Duration
-	voteTimeoutTicker *time.Ticker
 
 	log         []LogEntry
 	commitIndex int
 	lastApplied int
 
-	memberAppending []int32
-	nextIndex       []int
-	matchIndex      []int
-	applyCh         chan ApplyMsg
+	nextIndex  []int
+	matchIndex []int
+	applyCh    chan ApplyMsg
 
 	voteCh      chan bool
 	appendLogCh chan bool
@@ -196,17 +190,14 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.persister = persister
 	rf.me = me
 	rf.applyCh = applyCh
-	rf.heartBeatInterval = 40 * time.Millisecond
+	rf.heartBeatInterval = 100 * time.Millisecond
 	rf.electionTimeout = 250 * time.Millisecond
 	rf.leaderId = NULL
 	rf.commitIndex = 0
 	rf.lastApplied = 0
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
-	rf.memberAppending = make([]int32, len(peers))
-	for i := range peers {
-		rf.memberAppending[i] = 0
-	}
+
 	rf.voteCh = make(chan bool, 1)
 	rf.appendLogCh = make(chan bool, 1)
 	rf.role = Follower

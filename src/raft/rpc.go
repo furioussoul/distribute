@@ -97,16 +97,20 @@ func (rf *Raft) sendAppendEntries(server int, args *RequestAppendEntries, reply 
 	select {
 	case ok := <-ch:
 		return ok
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(80 * time.Millisecond):
 		return false
 	}
 }
 
 func (rf *Raft) vote() {
+
+	rf.mu.Lock()
 	if err := rf.setLastVoteFor(rf.me); err != nil {
 		rf.mu.Unlock()
 		return
 	}
+	rf.mu.Unlock()
+
 	var cancelQuorum int32
 
 	quorum := makeQuorum(len(rf.peers)/2+1, func(elected bool) {
@@ -126,13 +130,19 @@ func (rf *Raft) vote() {
 			continue
 		}
 
+		rf.mu.Lock()
+		currentTerm := rf.currentTerm
+		lastLogTerm := rf.log[len(rf.log)-1].Term
+		lastLogIndex := len(rf.log) - 1
+		rf.mu.Unlock()
+
 		go func(j int) {
 
 			args := RequestVoteArgs{
-				Term:         rf.currentTerm,
+				Term:         currentTerm,
 				CandidateId:  rf.me,
-				LastLogTerm:  rf.log[len(rf.log)-1].Term,
-				LastLogIndex: len(rf.log) - 1,
+				LastLogTerm:  lastLogTerm,
+				LastLogIndex: lastLogIndex,
 			}
 			reply := RequestVoteReply{}
 
@@ -168,11 +178,15 @@ func (rf *Raft) vote() {
 }
 
 func (rf *Raft) appendToMembers() {
+
 	for i := range rf.peers {
 		if i == rf.me {
 			continue
 		}
-		if rf.matchIndex[i] == len(rf.log)-1 {
+
+		appendEmpty := rf.matchIndex[i] == len(rf.log)-1
+
+		if appendEmpty {
 			rf.appendEmpty(i)
 		} else {
 			rf.appendLogEntry(i)
@@ -182,16 +196,22 @@ func (rf *Raft) appendToMembers() {
 
 func (rf *Raft) appendEmpty(i int) {
 
+	rf.mu.Lock()
+	currentTerm := rf.currentTerm
+	commit := rf.commitIndex
+	matchIndex := rf.matchIndex
+	rf.mu.Unlock()
+
 	go func(j int) {
 
 		reply := ReplyAppendEntries{}
 		request := RequestAppendEntries{
-			Term:         rf.currentTerm,
+			Term:         currentTerm,
 			LeaderId:     rf.me,
-			LeaderCommit: rf.commitIndex,
+			LeaderCommit: commit,
 		}
 
-		DPrintf("2B [%d] send AppendEmpty to [%d] -- matchIndex:[%+v]", rf.me, j, rf.matchIndex)
+		DPrintf("2B [%d] send AppendEmpty to [%d] -- matchIndex:[%+v]", rf.me, j, matchIndex)
 
 		ok := rf.sendAppendEntries(j, &request, &reply)
 
@@ -213,31 +233,33 @@ func (rf *Raft) appendEmpty(i int) {
 
 func (rf *Raft) appendLogEntry(i int) {
 
+	rf.mu.Lock()
+	currentTerm := rf.currentTerm
+	commitIndex := rf.commitIndex
+
+	prevIndex := rf.nextIndex[i] - 1
+	logIndex := rf.nextIndex[i]
+
+	if logIndex >= len(rf.log) {
+		logIndex--
+		prevIndex--
+	}
+
+	prev := rf.log[prevIndex]
+	entry := rf.log[logIndex]
+
+	rf.mu.Unlock()
+
 	go func(j int) {
-
-		if rf.role != Leader {
-			return
-		}
-
-		prevIndex := rf.nextIndex[j] - 1
-		logIndex := rf.nextIndex[j]
-
-		if logIndex >= len(rf.log) {
-			logIndex--
-			prevIndex--
-		}
-
-		prev := rf.log[prevIndex]
-		entry := rf.log[logIndex]
 
 		reply := ReplyAppendEntries{}
 		request := RequestAppendEntries{
-			Term:         rf.currentTerm,
+			Term:         currentTerm,
 			LeaderId:     rf.me,
 			Entries:      []LogEntry{entry},
 			PrevLogIndex: prev.Index,
 			PrevLogTerm:  prev.Term,
-			LeaderCommit: rf.commitIndex,
+			LeaderCommit: commitIndex,
 		}
 
 		ok := rf.sendAppendEntries(j, &request, &reply)
@@ -246,7 +268,6 @@ func (rf *Raft) appendLogEntry(i int) {
 		defer rf.mu.Unlock()
 
 		if !ok || request.Term != rf.currentTerm || rf.role != Leader {
-			rf.memberAppending[j] = 0
 			return
 		}
 
@@ -392,7 +413,6 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 	}
 
 	rf.transitionToFollower()
-	rf.sendToCh(rf.appendLogCh)
 }
 
 func (rf *Raft) commit(args *RequestAppendEntries) {
