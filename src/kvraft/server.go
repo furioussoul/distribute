@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const Debug = 1
+const Debug = 0
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
@@ -63,11 +63,13 @@ func (kv *KVServer) commitEntryLog(entry Op) Err {
 	}
 
 	ch := kv.putIfAbsent(index)
+	//分区后leader无法commit，导致超时
 	op := notified(ch)
 
 	if equalOp(originOp, op) {
 		return OK
 	} else {
+		// fake leader, log at index has be overwrite
 		return ErrWrongLeader
 	}
 }
@@ -106,7 +108,9 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 
 	err := kv.commitEntryLog(entry)
 	if err == OK {
+		kv.mu.Lock()
 		reply.Value = kv.db[args.Key]
+		kv.mu.Unlock()
 	}
 
 	reply.Err = err
@@ -142,7 +146,6 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 func (kv *KVServer) Kill() {
 	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()
-	// Your code here, if desired.
 }
 
 func (kv *KVServer) killed() bool {
@@ -159,33 +162,28 @@ func (kv *KVServer) CheckDup(id int, seqId int) bool {
 }
 
 func (kv *KVServer) ApplyToKvDb(args Op) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
 	switch args.Type {
 	case "Put":
 		kv.db[args.Key] = args.Value
 		kv.ack[args.Id] = args.SeqId
-		//DPrintf("Put ckId[%d] -- seqId[%d] -- key[%s] -- val[%s]", args.Id, args.SeqId, args.Key, kv.db[args.Key])
 	case "Append":
 		kv.db[args.Key] += args.Value
 		kv.ack[args.Id] = args.SeqId
-		//DPrintf("Append ckId[%d] -- seqId[%d] -- key[%s] -- val[%s]", args.Id, args.SeqId, args.Key, kv.db[args.Key])
 	case "Get":
-		//DPrintf("Get ckId[%d] -- seqId[%d] -- key[%s] -- val[%s]", args.Id, args.SeqId, args.Key, kv.db[args.Key])
 	}
 }
 
 func (kv *KVServer) listenApplied() {
 	go func() {
 		for msg := range kv.applyCh {
-
 			op := msg.Command.(Op)
-
 			if !kv.CheckDup(op.Id, op.SeqId) {
 				kv.ApplyToKvDb(op)
 			}
-
 			ch := kv.putIfAbsent(msg.CommandIndex)
 			ch <- op
-			DPrintf("3A -- [%d] -- applied -- [%+v]", kv.rf.Me(), msg)
 		}
 	}()
 }
@@ -205,20 +203,15 @@ func (kv *KVServer) listenApplied() {
 // for any long-running work.
 //
 func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
-	// call labgob.Register on structures you want
-	// Go's RPC library to marshall/unmarshall.
 	labgob.Register(Op{})
 
 	kv := new(KVServer)
 	kv.me = me
 	kv.maxraftstate = maxraftstate
 
-	// You may need initialization code here.
-
 	kv.applyCh = make(chan raft.ApplyMsg, 1)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
-	// You may need initialization code here.
 	kv.db = make(map[string]string)
 	kv.ack = make(map[int]int)
 	kv.commitCh = make(map[int]chan Op)

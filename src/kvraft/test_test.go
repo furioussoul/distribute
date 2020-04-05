@@ -2,7 +2,6 @@ package kvraft
 
 import (
 	"../linearizability"
-	"fmt"
 )
 
 import "testing"
@@ -193,7 +192,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 		clnts[i] = make(chan int)
 	}
 	for i := 0; i < 3; i++ {
-		log.Printf("Iteration %v\n", i)
+		//log.Printf("Iteration %v\n", i)
 		atomic.StoreInt32(&done_clients, 0)
 		atomic.StoreInt32(&done_partitioner, 0)
 		go spawn_clients_and_wait(t, cfg, nclients, func(cli int, myck *Clerk, t *testing.T) {
@@ -207,30 +206,28 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 			for atomic.LoadInt32(&done_clients) == 0 {
 				if (rand.Int() % 1000) < 500 {
 					nv := "x " + strconv.Itoa(cli) + " " + strconv.Itoa(j) + " y"
-					log.Printf("%d: client new append %v\n", cli, nv)
+					//log.Printf("%d: client new append %v\n", cli, nv)
 					Append(cfg, myck, key, nv)
 					last = NextValue(last, nv)
 					j++
 				} else {
-					log.Printf("%d: client new get %v\n", cli, key)
+					//log.Printf("%d: client new get %v\n", cli, key)
 					v := Get(cfg, myck, key)
 					if v != last {
 						log.Fatalf("get wrong value, key %v, wanted:\n%v\n, got\n%v\n", key, last, v)
 					}
 				}
 			}
-			fmt.Println("client quit")
 		})
 
 		if partitions {
 			// Allow the clients to perform some operations without interruption
 			time.Sleep(1 * time.Second)
 			go partitioner(t, cfg, ch_partitioner, &done_partitioner)
-			log.Printf("start partitioner %v\n", i)
+			//log.Printf("start partitioner %v\n", i)
 		}
 		time.Sleep(5 * time.Second)
 
-		fmt.Println("tell clients and partitioner to quit")
 		atomic.StoreInt32(&done_clients, 1)     // tell clients to quit
 		atomic.StoreInt32(&done_partitioner, 1) // tell partitioner to quit
 
@@ -245,7 +242,6 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 
 			// wait for a while so that we have a new term
 			time.Sleep(electionTimeout)
-			log.Printf("done partitioner %v\n", i)
 		}
 
 		if crash {
@@ -264,20 +260,20 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 			cfg.ConnectAll()
 		}
 
-		log.Printf("wait for clients %d\n", i)
+		//log.Printf("wait for clients %d\n", i)
 		for i := 0; i < nclients; i++ {
-			log.Printf("read from clients %d\n", i)
+			//log.Printf("read from clients %d\n", i)
 			j := <-clnts[i]
 			// if j < 10 {
 			// 	log.Printf("Warning: client %d managed to perform only %d put operations in 1 sec?\n", i, j)
 			// }
 			key := strconv.Itoa(i)
-			log.Printf("Check %v for client %d  key %+v\n", j, i, key)
+			//log.Printf("Check %v for client %d  key %+v\n", j, i, key)
 			v := Get(cfg, ck, key)
 			checkClntAppends(t, i, v, j)
 		}
 
-		log.Printf("checkClntAppends  %v\n", i)
+		//log.Printf("checkClntAppends  %v\n", i)
 
 		if maxraftstate > 0 {
 			// Check maximum after the servers have processed all client

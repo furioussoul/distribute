@@ -132,7 +132,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := rf.role == Leader
 	index := NULL
 
-	// Your code here (2B).
 	if isLeader {
 		index = len(rf.log)
 		entry := LogEntry{
@@ -244,17 +243,21 @@ func Make(peers []*labrpc.ClientEnd, me int,
 }
 
 func (rf *Raft) leaderHb() {
+
 	for i := 0; i < len(rf.peers); i++ {
 		if i == rf.me {
 			continue
 		}
+
 		go func(j int) {
 			for {
+
 				rf.mu.Lock()
 				if rf.role != Leader {
 					rf.mu.Unlock()
 					return
 				}
+
 				args := RequestAppendEntries{
 					rf.currentTerm,
 					rf.me,
@@ -266,6 +269,7 @@ func (rf *Raft) leaderHb() {
 					rf.commitIndex,
 				}
 				rf.mu.Unlock()
+
 				reply := &ReplyAppendEntries{}
 				ok := rf.sendAppendEntries(j, &args, reply)
 
@@ -292,14 +296,18 @@ func (rf *Raft) leaderHb() {
 					rf.updateCommitIndex()
 					rf.mu.Unlock()
 					return
-				} else { //If AppendEntries fails because of log inconsistency: decrement nextIndex and retry
-					tarIndex := reply.ConflictIndex //If it does not find an entry with that term
+				} else {
+					tarIndex := reply.ConflictIndex
+					//If it does not find an entry with that term
 					if reply.ConflictTerm != NULL {
-						logSize := len(rf.log)         //first search its log for conflictTerm
-						for i := 0; i < logSize; i++ { //if it finds an entry in its log with that term,
+						logSize := len(rf.log)
+						//first search its log for conflictTerm
+						for i := 0; i < logSize; i++ {
 							if rf.log[i].Term != reply.ConflictTerm {
 								continue
 							}
+							//找最后一个
+							//if it finds an entry in its log with that term,
 							for i < logSize && rf.log[i].Term == reply.ConflictTerm {
 								i++
 							} //set nextIndex to be the one
@@ -315,11 +323,13 @@ func (rf *Raft) leaderHb() {
 }
 
 func (rf *Raft) updateCommitIndex() {
-	rf.matchIndex[rf.me] = len(rf.log) - 1
+	rf.matchIndex[rf.me] = rf.getLastLogIdx()
 	copyMatchIndex := make([]int, len(rf.matchIndex))
 	copy(copyMatchIndex, rf.matchIndex)
 	sort.Sort(sort.Reverse(sort.IntSlice(copyMatchIndex)))
+	//将所有节点的matchIndex倒序排,中间节的就是commitIndex
 	N := copyMatchIndex[len(copyMatchIndex)/2]
+	//只commit当前term的日志
 	if N > rf.commitIndex && rf.log[N].Term == rf.currentTerm {
 		rf.commitIndex = N
 		rf.updateLastApplied()
@@ -552,6 +562,10 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 	defer rf.mu.Unlock()
 	defer sendToCh(rf.appendLogCh)
 
+	if args.Term < rf.currentTerm {
+		return
+	}
+
 	if args.Term > rf.currentTerm {
 		rf.transitionToFollower(args.Term)
 	}
@@ -561,20 +575,20 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 	reply.ConflictTerm = NULL
 	reply.ConflictIndex = 0
 
-	if args.Term < rf.currentTerm {
-		return
-	}
+	prevLogIndexTerm := NULL
 
-	prevLogIndexTerm := -1
 	if args.PrevLogIndex >= 0 && args.PrevLogIndex < len(rf.log) {
 		prevLogIndexTerm = rf.log[args.PrevLogIndex].Term
 	}
+
+	//PrevLogTerm冲突
 	if args.PrevLogTerm != prevLogIndexTerm {
 		reply.ConflictIndex = len(rf.log)
-		if prevLogIndexTerm != -1 {
+		if prevLogIndexTerm != NULL {
 			reply.ConflictTerm = prevLogIndexTerm
 			for i := 0; i < len(rf.log); i++ {
-				if rf.log[i].Term == reply.ConflictTerm { //the first index whose entry has term equal to conflictTerm
+				if rf.log[i].Term == reply.ConflictTerm {
+					//找第一个
 					reply.ConflictIndex = i
 					break
 				}
@@ -583,6 +597,7 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntries, reply *ReplyAppendEntr
 		return
 	}
 
+	//没有冲突
 	index := args.PrevLogIndex
 	for i := 0; i < len(args.Entries); i++ {
 		index++

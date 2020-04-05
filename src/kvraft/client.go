@@ -22,9 +22,9 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck.servers = servers
 	// You'll have to add code here.
 	ck.id = generateRandomNumber(10, 1000000, 1)[0]
-	fmt.Println(ck.id)
+	//fmt.Println(ck.id)
 	ck.seqId = 0
-	ck.leader = -1
+	ck.leader = 0
 	return ck
 }
 
@@ -89,32 +89,15 @@ func (ck *Clerk) Get(key string) string {
 	reply := GetReply{}
 	ck.seqId++
 
+	i := ck.leader
 	for {
-
-		if ck.leader != -1 {
-			ok := ck.call(args, func() bool {
-				return ck.servers[ck.leader].Call("KVServer.Get", &args, &reply)
-			})
-
-			if ok && reply.Err == OK {
-				DPrintf("READ -- [%d] -- args[%+v] -- reply [%+v]", ck.leader, args, reply)
-				return reply.Value
-			}
+		ok := ck.servers[i].Call("KVServer.Get", &args, &reply)
+		if ok && reply.Err == OK {
+			ck.leader = i
+			DPrintf("READ -- [%d] -- args[%+v] -- reply [%+v]", i, args, reply)
+			return reply.Value
 		}
-
-		for i := range ck.servers {
-
-			ok := ck.call(args, func() bool {
-				return ck.servers[i].Call("KVServer.Get", &args, &reply)
-			})
-
-			if ok && reply.Err == OK {
-				ck.leader = i
-				DPrintf("READ -- [%d] -- args[%+v] -- reply [%+v]", i, args, reply)
-				return reply.Value
-			}
-		}
-		time.Sleep(100)
+		i = (i + 1) % len(ck.servers)
 	}
 }
 
@@ -143,48 +126,16 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	reply := PutAppendReply{}
 	ck.seqId++
 
+	i := ck.leader
 	for {
 
-		if ck.leader != -1 {
-			ok := ck.call(args, func() bool {
-				return ck.servers[ck.leader].Call("KVServer.PutAppend", &args, &reply)
-			})
-			if ok && reply.Err == OK {
-				DPrintf("WRITE -- [%d] -- args[%+v] -- val[%s] -- reply [%+v]", ck.leader, args, args.Value, reply)
-				return
-			}
+		ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
+		if ok && reply.Err == OK {
+			ck.leader = i
+			DPrintf("WRITE -- [%d] -- args[%+v] -- val[%s] -- reply [%+v]", i, args, args.Value, reply)
+			return
 		}
-
-		for i := range ck.servers {
-
-			ok := ck.call(args, func() bool {
-				return ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
-			})
-			if ok && reply.Err == OK {
-				DPrintf("WRITE -- [%d] -- args[%+v] -- val[%s] -- reply [%+v]", i, args, args.Value, reply)
-				ck.leader = i
-				return
-			}
-		}
-		time.Sleep(100)
-	}
-}
-
-func (ck *Clerk) call(args interface{}, fn func() bool) bool {
-
-	ch := make(chan bool)
-
-	go func() {
-		ok := fn()
-		ch <- ok
-	}()
-
-	select {
-	case ok := <-ch:
-		return ok
-	case <-time.After(1 * time.Second):
-		DPrintf("client timeout -- args[%+v]", args)
-		return false
+		i = (i + 1) % len(ck.servers)
 	}
 }
 
