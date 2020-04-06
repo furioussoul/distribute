@@ -42,3 +42,15 @@ func min(a ...int) int {
 
 	return tmp
 }
+
+func max(a ...int) int {
+	tmp := a[0]
+
+	for i := range a {
+		if a[i] > tmp {
+			tmp = a[i]
+		}
+	}
+
+	return tmp
+}

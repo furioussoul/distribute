@@ -4,6 +4,7 @@ import (
 	"../labgob"
 	"../labrpc"
 	"../raft"
+	"bytes"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -37,12 +38,15 @@ type KVServer struct {
 	applyCh chan raft.ApplyMsg
 	dead    int32 // set by Kill()
 
+	persist      *raft.Persister
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
 	db       map[string]string
 	ack      map[int]int
 	commitCh map[int]chan Op
+
+	killCh chan bool
 }
 
 func (kv *KVServer) commitEntryLog(entry Op) Err {
@@ -51,10 +55,7 @@ func (kv *KVServer) commitEntryLog(entry Op) Err {
 		Type:  entry.Type,
 		Key:   entry.Key,
 		Value: entry.Value,
-	}
-	_, isLeader := kv.rf.GetState()
-	if !isLeader {
-		return ErrWrongLeader
+		SeqId: entry.SeqId,
 	}
 
 	index, _, isLeader := kv.rf.Start(entry)
@@ -75,7 +76,7 @@ func (kv *KVServer) commitEntryLog(entry Op) Err {
 }
 
 func equalOp(a Op, b Op) bool {
-	return a.Key == b.Key && a.Value == b.Value && a.Type == b.Type
+	return a.Key == b.Key && a.Value == b.Value && a.Type == b.Type && a.SeqId == b.SeqId
 }
 
 func notified(ch chan Op) Op {
@@ -144,8 +145,10 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 // to suppress debug output from a Kill()ed instance.
 //
 func (kv *KVServer) Kill() {
+	DPrintf("kill")
 	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()
+	kv.killCh <- true
 }
 
 func (kv *KVServer) killed() bool {
@@ -162,8 +165,6 @@ func (kv *KVServer) CheckDup(id int, seqId int) bool {
 }
 
 func (kv *KVServer) ApplyToKvDb(args Op) {
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
 	switch args.Type {
 	case "Put":
 		kv.db[args.Key] = args.Value
@@ -173,19 +174,6 @@ func (kv *KVServer) ApplyToKvDb(args Op) {
 		kv.ack[args.Id] = args.SeqId
 	case "Get":
 	}
-}
-
-func (kv *KVServer) listenApplied() {
-	go func() {
-		for msg := range kv.applyCh {
-			op := msg.Command.(Op)
-			if !kv.CheckDup(op.Id, op.SeqId) {
-				kv.ApplyToKvDb(op)
-			}
-			ch := kv.putIfAbsent(msg.CommandIndex)
-			ch <- op
-		}
-	}()
 }
 
 //
@@ -208,6 +196,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv := new(KVServer)
 	kv.me = me
 	kv.maxraftstate = maxraftstate
+	DPrintf("[%d] maxraftstate", maxraftstate)
+	kv.persist = persister
 
 	kv.applyCh = make(chan raft.ApplyMsg, 1)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
@@ -215,8 +205,68 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.db = make(map[string]string)
 	kv.ack = make(map[int]int)
 	kv.commitCh = make(map[int]chan Op)
+	kv.killCh = make(chan bool, 1)
+	kv.readSnapShot(kv.persist.ReadSnapshot())
+	go func() {
+		for {
+			select {
+			case <-kv.killCh:
+				return
+			case msg := <-kv.applyCh:
+				if !msg.CommandValid {
+					kv.readSnapShot(msg.SnapShot)
+					continue
+				}
+				kv.mu.Lock()
+				op := msg.Command.(Op)
+				if !kv.CheckDup(op.Id, op.SeqId) {
+					kv.ApplyToKvDb(op)
+				}
+				kv.mu.Unlock()
 
-	kv.listenApplied()
+				if kv.needSnapShot() {
+					go kv.doSnapShot(msg.CommandIndex)
+				}
 
+				ch := kv.putIfAbsent(msg.CommandIndex)
+				ch <- op
+			}
+		}
+	}()
 	return kv
+}
+
+func (kv *KVServer) readSnapShot(snapshot []byte) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	if snapshot == nil || len(snapshot) < 1 {
+		return
+	}
+	r := bytes.NewBuffer(snapshot)
+	d := labgob.NewDecoder(r)
+	var db map[string]string
+	var ack map[int]int
+	if d.Decode(&db) != nil || d.Decode(&ack) != nil {
+		DPrintf("readSnapshot ERROR for server %d", kv.me)
+	} else {
+		kv.db, kv.ack = db, ack
+	}
+}
+
+func (kv *KVServer) needSnapShot() bool {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	threshold := 10
+	return kv.maxraftstate > 0 &&
+		kv.maxraftstate-kv.persist.RaftStateSize() < kv.maxraftstate/threshold
+}
+
+func (kv *KVServer) doSnapShot(index int) {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	kv.mu.Lock()
+	e.Encode(kv.db)
+	e.Encode(kv.ack)
+	kv.mu.Unlock()
+	kv.rf.DoSnapshot(index, w.Bytes())
 }
