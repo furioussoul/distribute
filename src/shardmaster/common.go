@@ -36,6 +36,8 @@ type Err string
 
 type JoinArgs struct {
 	Servers map[int][]string // new GID -> servers mappings
+	Cid     int64
+	SeqNum  int
 }
 
 type JoinReply struct {
@@ -44,7 +46,9 @@ type JoinReply struct {
 }
 
 type LeaveArgs struct {
-	GIDs []int
+	GIDs   []int
+	Cid    int64
+	SeqNum int
 }
 
 type LeaveReply struct {
@@ -53,8 +57,10 @@ type LeaveReply struct {
 }
 
 type MoveArgs struct {
-	Shard int
-	GID   int
+	Shard  int
+	GID    int
+	Cid    int64
+	SeqNum int
 }
 
 type MoveReply struct {
